@@ -20,6 +20,10 @@ function toast(m){const t=$('#toast');t.textContent=m;t.hidden=false;clearTimeou
 
 // ---------- DEMO MODE (all data local to this device) ----------
 const DEMO_KEY='ff_demo_db';
+const DEMO_LOOSE=[{name:'EXAMPLE Grease Cartridge',part_number:'EX-GR-14',manufacturer:'Example Brand',category:'Fluids',qty:12,reorder_level:6,bin:'Shelf F1',fits:'Most machines',supplier:'Example Supplier'},
+ {name:'EXAMPLE V-Belt',part_number:'EX-VB-A42',manufacturer:'Example Brand',category:'Belts',qty:1,reorder_level:2,bin:'Peg wall B',fits:'Generators, compressors',supplier:'Example Supplier'},
+ {name:'EXAMPLE Hydraulic Hose 1/2" x 36"',part_number:'EX-HH-0836',manufacturer:'Example Brand',category:'Hydraulic',qty:3,reorder_level:1,bin:'Hose rack',fits:'Loader, excavator',supplier:'Example Supplier'},
+ {name:'EXAMPLE Grade 8 Bolt Kit',part_number:'EX-BK-G8',manufacturer:'Example Brand',category:'Hardware',qty:0,reorder_level:1,bin:'Bin H3',fits:null,supplier:'Example Supplier'}];
 const DEMO_CHECK=['Walk-around: no leaks, damage, or loose parts','Engine oil level OK','Coolant level OK','Hydraulic / fuel levels OK','Tires / tracks and wheels OK','Lights, horn, and backup alarm work','Brakes and steering work','Seat belt, mirrors, and fire extinguisher OK'];
 const isDemo=()=>LS.ff_demo==='1'||!!window.FF_STANDALONE;
 async function demoSeed(){return window.FF_SEED?JSON.parse(JSON.stringify(window.FF_SEED)):fetch('/demo-seed.json').then(r=>r.json());}
@@ -63,6 +67,14 @@ async function demoApi(path,opt){
     if(k==='service'){if(!b.date||!b.work_done)throw new Error('Date and work done required');d.service.push(num({...clean(b),id:nid(),equipment_id:id,created_at:now},['meter','cost']));}
     if(k==='parts'){if(!b.name)throw new Error('Part name is required');d.parts.push(num({...clean(b),id:nid(),equipment_id:id,is_example:0,created_at:now,updated_at:now},['qty','reorder_level','price']));}
     demoSave(d);return{id:d.next-1};}
+  if(!d.loose){d.loose=DEMO_LOOSE.map(p=>({...p,id:nid(),notes:'EXAMPLE part – delete when you add real parts.',photo:null,is_example:1,created_at:now,updated_at:now}));demoSave(d);}
+  if(path==='/loose'){if(m==='GET')return d.loose.map(p=>({...p,photo:undefined,photo_src:p.photo,has_photo:!!p.photo})).sort((p,q)=>p.is_example-q.is_example||p.name.localeCompare(q.name));
+    if(!b.name)throw new Error('Part name is required');const p=num({...clean(b),id:nid(),is_example:0,created_at:now,updated_at:now},['qty','reorder_level']);d.loose.push(p);demoSave(d);return{id:p.id};}
+  if(x=path.match(/^\/loose\/(\d+)(\/qty)?$/)){const id=+x[1],i=d.loose.findIndex(p=>p.id===id);if(i<0)throw new Error('Not found');const p=d.loose[i];
+    if(x[2]){p.qty=Math.max(0,(Number(p.qty)||0)+(Number(b.delta)||0));p.updated_at=now;demoSave(d);return{qty:p.qty};}
+    if(m==='GET')return p;
+    if(m==='PUT'){if(!b.name)throw new Error('Part name is required');d.loose[i]=num({...p,...clean(b),id,updated_at:now},['qty','reorder_level']);demoSave(d);return{ok:true};}
+    if(m==='DELETE'){d.loose.splice(i,1);demoSave(d);return{ok:true};}}
   if(path==='/parts'&&m==='GET')return d.parts.map(p=>{const e=d.equipment.find(e=>e.id===p.equipment_id)||{};return{...p,photo:undefined,equipment_name:e.name,equipment_unit:e.unit};}).sort((p,q)=>p.name.localeCompare(q.name));
   if(x=path.match(/^\/parts\/(\d+)$/)){const id=+x[1],i=d.parts.findIndex(p=>p.id===id);if(i<0)throw new Error('Not found');
     if(m==='GET')return d.parts[i];
@@ -118,13 +130,13 @@ function route(){
   if(!isDemo()&&(!store.code||!store.name))return login();
   $('#menu').hidden=false;document.body.classList.remove('login-bg');
   const m=location.hash.match(/^#\/eq\/(\d+)/);
-  m?detail(+m[1]):list();
+  m?detail(+m[1]):location.hash==='#/parts'?partsPage():list();
 }
 
-let cache=[],allParts=[];
+let cache=[];
 async function list(){
   header('Fleet Files',false);
-  app.innerHTML=`<input class="search" id="q" type="search" placeholder="🔍  Search equipment or parts…" value="${esc(state.q)}">
+  app.innerHTML=SEG('eq')+`<input class="search" id="q" type="search" placeholder="🔍  Search name, unit #, make, VIN…" value="${esc(state.q)}">
    <div class="chips" id="tc"></div><div class="chips" id="sc"></div><div id="list"><div class="empty">Loading…</div></div>
    <button class="btn primary fab" id="add">＋ Add Equipment</button>`;
   const chips=(el,arr,key)=>{el.innerHTML=['all',...arr].map(v=>`<button class="chip ${state[key]===v?'on':''}" data-v="${v}">${v==='all'?(key==='type'?'All types':'All status'):v}</button>`).join('');
@@ -132,7 +144,6 @@ async function list(){
   chips($('#tc'),TYPES,'type');chips($('#sc'),STATUSES,'status');
   let qt;$('#q').oninput=e=>{state.q=e.target.value;clearTimeout(qt);qt=setTimeout(draw,150);};
   $('#add').onclick=()=>editForm();
-  api('/parts').then(p=>{allParts=p;if(state.q)draw();}).catch(()=>{});
   try{cache=await api('/equipment');}catch(e){$('#list').innerHTML=`<div class="empty">${esc(e.message)}</div>`;return;}
   draw();
 }
@@ -149,14 +160,6 @@ function draw(){
      <div class="sub"><span class="badge b-${sc(e.status)}">${esc(e.status)}</span>${e.is_example?'<span class="badge b-ex">Example</span>':''}${e.low_parts?`<span class="badge b-low">${e.low_parts} low part${e.low_parts>1?'s':''}</span>`:''}</div>
      <div class="sub">🔧 Last service: ${fmtDate(e.last_service)}</div></div></button>`).join('')
    :`<div class="empty">${cache.length?'No equipment matches.':'No equipment yet. Tap “Add Equipment”.'}</div>`;
-  if(!q)return;
-  const pr=allParts.filter(p=>[p.name,p.part_number,p.manufacturer,p.supplier,p.bin,p.notes].join(' ').toLowerCase().includes(q)).slice(0,50);
-  $('#list').insertAdjacentHTML('beforeend',`<div class="sec-h" style="margin-top:18px">🔩 Parts (${pr.length})</div>`+(pr.length?pr.map(p=>`
-   <button class="pcard sp ${isLow(p)?'low':''}" data-id="${p.id}" data-eq="${p.equipment_id}"><div class="main"><div class="name">${esc(p.name)}</div>
-    <div class="sub">${p.part_number?'#'+esc(p.part_number):'No part #'}${p.manufacturer?' · '+esc(p.manufacturer):''}</div>
-    <div class="sub">🚜 ${esc(p.equipment_name||'')}${p.equipment_unit?' · #'+esc(p.equipment_unit):''}</div></div>
-    <div class="qty"><b>${p.qty??'–'}</b><span>on hand</span>${isLow(p)?'<em>LOW</em>':''}</div></button>`).join(''):'<div class="empty" style="padding:12px">No parts match.</div>'));
-  $('#list').querySelectorAll('.sp').forEach(b=>b.onclick=()=>{state.tab='parts';state.pq='';state.hl=+b.dataset.id;location.hash='#/eq/'+b.dataset.eq;});
 }
 
 async function detail(id){
@@ -464,6 +467,90 @@ function docSheet(e,d){
     $('#x').onclick=()=>docSheet(e,d);
     $('#s').onclick=async()=>{const title=$('#dt').value.trim();if(!title)return toast('Enter a title');try{await api('/docs/'+d.id,{method:'PUT',body:{title}});toast('Renamed');backToProc(e);}catch(x){toast(x.message);}};};
   $('#del').onclick=()=>adminConfirm(`Delete “${esc(d.title)}”?`,'This permanently removes the file. This cannot be undone.','Delete',async a=>{await api('/docs/'+d.id,{method:'DELETE',admin:a});toast('Deleted');backToProc(e);});
+}
+// ---------- Shop Parts page (loose parts not tied to a machine) ----------
+const CATS=['Filters','Belts','Hydraulic','Electrical','Hardware','Fluids','Tires','Engine','Other'];
+const SEG=on=>`<div class="seg"><button class="${on==='eq'?'on':''}" onclick="location.hash=''">🚜 Equipment</button><button class="${on==='parts'?'on':''}" onclick="location.hash='#/parts'">🔩 Parts</button></div>`;
+let loose=[],machParts=[];
+async function partsPage(){
+  header('Fleet Files',false);
+  state.lq=state.lq||'';state.lcat=state.lcat||'all';state.lstock=state.lstock||'all';
+  app.innerHTML=SEG('parts')+`<input class="search" id="lq" type="search" placeholder="🔍  Search any part, part #, brand, bin…" value="${esc(state.lq)}">
+   <div class="chips" id="lc"></div><div class="chips" id="ls"></div><div id="list"><div class="empty">Loading…</div></div>
+   <button class="btn primary fab" id="add">＋ Add Part</button>`;
+  $('#add').onclick=()=>looseForm();
+  let qt;$('#lq').oninput=e=>{state.lq=e.target.value;clearTimeout(qt);qt=setTimeout(drawLoose,150);};
+  $('#ls').onclick=e=>{const b=e.target.closest('.chip');if(!b)return;state.lstock=b.dataset.v;drawLoose();};
+  $('#lc').onclick=e=>{const b=e.target.closest('.chip');if(!b)return;state.lcat=b.dataset.v;drawLoose();};
+  api('/parts').then(p=>{machParts=p;if(state.lq)drawLoose();}).catch(()=>{});
+  try{loose=await api('/loose');}catch(e){$('#list').innerHTML=`<div class="empty">${esc(e.message)}</div>`;return;}
+  drawLoose();
+}
+const partHit=(p,q)=>[p.name,p.part_number,p.manufacturer,p.supplier,p.bin,p.notes,p.category,p.fits].join(' ').toLowerCase().includes(q);
+function drawLoose(){
+  if(!$('#lc'))return;
+  const q=state.lq.toLowerCase();
+  const cats=[...new Set(loose.map(p=>p.category).filter(Boolean))].sort();
+  $('#lc').innerHTML=['all',...cats].map(v=>`<button class="chip ${state.lcat===v?'on':''}" data-v="${esc(v)}">${v==='all'?'All categories':esc(v)}</button>`).join('');
+  $('#ls').innerHTML=[['all','All stock'],['in','In stock'],['low','Low stock']].map(([v,l])=>`<button class="chip ${state.lstock===v?'on':''}" data-v="${v}">${l}</button>`).join('');
+  const rows=loose.filter(p=>(state.lcat==='all'||p.category===state.lcat)&&(state.lstock==='all'||(state.lstock==='low'?isLow(p):!isLow(p)&&Number(p.qty)>0))&&(!q||partHit(p,q)));
+  const thumb=p=>p.photo_src?`<img src="${p.photo_src}" alt="">`:p.has_photo?`<img loading="lazy" src="/api/loose/${p.id}/photo?code=${encodeURIComponent(store.code||'')}&v=${encodeURIComponent(p.updated_at)}" alt="">`:'🔩';
+  let h=(q?`<div class="sec-h">🧰 Shop Parts (${rows.length})</div>`:`<div class="mini">${rows.length} of ${loose.length} shop parts${loose.filter(isLow).length?` · <b style="color:var(--orange)">${loose.filter(isLow).length} low</b>`:''}</div>`)+
+   (rows.length?rows.map(p=>`<button class="pcard lp ${isLow(p)?'low':''}" data-id="${p.id}"><div class="thumb">${thumb(p)}</div>
+    <div class="main"><div class="name">${esc(p.name)}</div>
+     <div class="sub">${esc([p.part_number&&('#'+p.part_number),p.manufacturer].filter(Boolean).join(' · '))}</div>
+     <div class="sub">${p.category?`<span class="badge b-cat">${esc(p.category)}</span>`:''}${p.is_example?'<span class="badge b-ex">Example</span>':''}${p.bin?' 📍 '+esc(p.bin):''}</div></div>
+    <div class="qty"><b>${p.qty??'–'}</b><span>on hand</span>${isLow(p)?'<em>LOW</em>':''}</div></button>`).join('')
+   :`<div class="empty">${loose.length?'No shop parts match.':'No shop parts yet. Tap “Add Part”.'}</div>`);
+  if(q){const mp=machParts.filter(p=>partHit(p,q)).slice(0,50);
+    h+=`<div class="sec-h" style="margin-top:18px">🚜 On Equipment (${mp.length})</div>`+(mp.length?mp.map(p=>`
+     <button class="pcard sp ${isLow(p)?'low':''}" data-id="${p.id}" data-eq="${p.equipment_id}"><div class="main"><div class="name">${esc(p.name)}</div>
+      <div class="sub">${p.part_number?'#'+esc(p.part_number):'No part #'}${p.manufacturer?' · '+esc(p.manufacturer):''}</div>
+      <div class="sub">🚜 ${esc(p.equipment_name||'')}${p.equipment_unit?' · #'+esc(p.equipment_unit):''}</div></div>
+      <div class="qty"><b>${p.qty??'–'}</b><span>on hand</span>${isLow(p)?'<em>LOW</em>':''}</div></button>`).join(''):'<div class="empty" style="padding:12px">No machine parts match.</div>');}
+  $('#list').innerHTML=h;
+  $('#list').querySelectorAll('.lp').forEach(b=>b.onclick=()=>looseView(+b.dataset.id));
+  $('#list').querySelectorAll('.sp').forEach(b=>b.onclick=()=>{state.tab='parts';state.pq='';state.hl=+b.dataset.id;location.hash='#/eq/'+b.dataset.eq;});
+}
+async function looseView(id){
+  let p;try{p=await api('/loose/'+id);}catch(x){return toast(x.message);}
+  const kv=(k,v)=>v==null||v===''?'':`<div class="kv"><b>${k}</b><span>${v}</span></div>`;
+  modal(`${p.photo?`<img class="hero" src="${p.photo}" alt="" style="max-height:220px">`:''}
+   <h2>${esc(p.name)}</h2>${p.is_example?'<div class="mini">EXAMPLE part – delete it when you add real parts.</div>':''}
+   <div id="lowb">${isLow(p)?'<div class="lowbar">⚠ Low stock – at or below reorder level</div>':''}</div>
+   <div class="qtybox"><button class="btn qbtn" id="qm" aria-label="One less">−</button><div><b id="qv">${p.qty??0}</b><span>on hand</span></div><button class="btn qbtn" id="qp" aria-label="One more">＋</button></div>
+   <div class="grid" style="margin-top:8px">${kv('Part #',esc(p.part_number))}${kv('Brand',esc(p.manufacturer))}${kv('Category',esc(p.category))}${kv('Reorder at',esc(p.reorder_level))}${kv('Location / bin',esc(p.bin))}${kv('Supplier',esc(p.supplier))}</div>
+   ${p.fits?`<div class="item"><div class="mini">Fits</div><div class="body">${esc(p.fits)}</div></div>`:''}
+   ${p.notes?`<div class="item"><div class="body">${esc(p.notes)}</div></div>`:''}
+   <div class="row" style="margin-top:12px"><button class="btn" id="x">Close</button><button class="btn primary" id="ed">✎ Edit</button></div>`);
+  const bump=async dl=>{try{const r=await api(`/loose/${p.id}/qty`,{method:'POST',body:{delta:dl}});p.qty=r.qty;$('#qv').textContent=r.qty;
+    $('#lowb').innerHTML=isLow(p)?'<div class="lowbar">⚠ Low stock – at or below reorder level</div>':'';const l=loose.find(x=>x.id===p.id);if(l){l.qty=r.qty;drawLoose();}}catch(x){toast(x.message);}};
+  $('#qm').onclick=()=>bump(-1);$('#qp').onclick=()=>bump(1);
+  $('#x').onclick=close;$('#ed').onclick=()=>looseForm(p);
+}
+function looseForm(p){
+  const isNew=!p;p=p||{};let photo=p.photo||null;
+  const f=(id,lab,type='text',extra='')=>`<div><label for="l_${id}">${lab}</label><input id="l_${id}" type="${type}" ${extra} value="${esc(p[id])}"></div>`;
+  modal(`<h2>${isNew?'Add Shop Part':'Edit Shop Part'}</h2>
+   ${f('name','Part name *','text','placeholder="e.g. V-belt A42"')}
+   <div class="row">${f('part_number','Part #')}${f('manufacturer','Brand')}</div>
+   ${f('category','Category','text','list="catlist" placeholder="e.g. Filters"')}<datalist id="catlist">${CATS.map(c=>`<option value="${c}">`).join('')}</datalist>
+   <div class="row">${f('qty','Qty on hand','number','inputmode="decimal"')}${f('reorder_level','Low at','number','inputmode="decimal"')}</div>
+   ${f('bin','Location / bin')}
+   ${f('fits','Fits which machines (optional)','text','placeholder="e.g. Loader, excavator"')}
+   ${f('supplier','Supplier')}
+   <label for="l_notes">Notes</label><textarea id="l_notes">${esc(p.notes)}</textarea>
+   <label>Photo (optional)</label><img id="lpv" class="hero" style="max-height:160px;${photo?'':'display:none'}" src="${photo||''}">
+   <div class="row"><label class="btn" style="margin:0;color:var(--text)">📷 ${photo?'Change':'Add'} Photo<input id="l_photo" type="file" accept="image/*" hidden></label><button class="btn" id="lrm" ${photo?'':'hidden'}>Remove</button></div>
+   <div class="row" style="margin-top:18px"><button class="btn" id="x">Cancel</button><button class="btn primary" id="s">Save Part</button></div>
+   ${isNew?'':'<button class="btn danger block" id="del" style="margin-top:22px">🗑 Delete Part</button>'}`);
+  $('#l_photo').onchange=async ev=>{const fl=ev.target.files[0];if(!fl)return;try{photo=await shrink(fl);$('#lpv').src=photo;$('#lpv').style.display='';$('#lrm').hidden=false;}catch{toast('Could not read photo');}};
+  $('#lrm').onclick=()=>{photo=null;$('#lpv').style.display='none';$('#lrm').hidden=true;};
+  $('#x').onclick=isNew?close:()=>looseView(p.id);
+  $('#s').onclick=async()=>{const b={photo};['name','part_number','manufacturer','category','qty','reorder_level','bin','fits','supplier','notes'].forEach(k=>b[k]=$('#l_'+k).value.trim());
+    if(!b.name)return toast('Part name is required');
+    try{if(isNew)await api('/loose',{method:'POST',body:b});else await api('/loose/'+p.id,{method:'PUT',body:b});close();toast(isNew?'Part added':'Part saved');partsPage();}catch(x){toast(x.message);}};
+  if(!isNew)$('#del').onclick=()=>adminConfirm(`Delete “${esc(p.name)}”?`,'This permanently removes this shop part. This cannot be undone.','Delete Part',async a=>{await api('/loose/'+p.id,{method:'DELETE',admin:a});close();toast('Part deleted');partsPage();});
 }
 async function credits(){const c=window.FF_CREDITS||await fetch('/photos/credits.json').then(r=>r.json()).catch(()=>({}));
   modal(`<h2>Photo Credits</h2><p class="mini">Photos from Wikimedia Commons, used under their licenses (unmodified except resizing/cropping).</p>${Object.entries(c).map(([k,v])=>`<div class="item"><b style="text-transform:capitalize">${esc(k.replace('-',' '))}</b><div class="mini">${esc(v.author)} · ${esc(v.license)}</div><a href="${esc(v.page)}" target="_blank" rel="noopener" style="color:var(--yellow);word-break:break-all;font-size:14px">${esc(v.page)}</a></div>`).join('')}<button class="btn block" id="x">Close</button>`);$('#x').onclick=close;}

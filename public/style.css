@@ -106,3 +106,11 @@ body.login-bg .login{padding-top:24vh}
 .ires .pf{flex:none;width:72px;font-weight:800;font-size:14px}.ires.pass .pf{color:var(--green)}.ires.fail .pf{color:var(--red)}.ires.skip .pf{color:var(--muted)}
 /* v6 part search */
 .pcard.hl{outline:3px solid var(--yellow);box-shadow:0 0 0 6px rgba(245,179,1,.25)}
+/* v7 Equipment / Parts switch + shop parts */
+.seg{display:flex;gap:4px;padding:4px;margin:0 0 10px;background:rgba(10,14,19,.82);border:2px solid var(--line);border-radius:14px}
+.seg button{flex:1;min-height:48px;border:0;border-radius:10px;background:transparent;color:var(--muted);font:700 16px "Oxanium",sans-serif;text-transform:uppercase;letter-spacing:1px}
+.seg button.on{background:var(--yellow);color:#111}
+.badge.b-cat{background:#2d4a66;color:#dbeafe}
+.qtybox{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 0;padding:8px;background:var(--panel2);border-radius:14px}
+.qtybox>div{text-align:center}.qtybox b{display:block;font:700 36px "Oxanium",sans-serif}.qtybox span{font-size:13px;color:var(--muted);text-transform:uppercase}
+.qbtn{min-width:76px;min-height:64px;font-size:34px;padding:0}

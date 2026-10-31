@@ -74,6 +74,18 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
     save(); fs.writeFileSync(DB_FILE + '.procedures-seeded', now());
   }
 
+  // ---- Loose shop parts (v7): not tied to any machine. Additive only. ----
+  db.exec(`CREATE TABLE IF NOT EXISTS loose_parts(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, part_number TEXT, manufacturer TEXT, category TEXT, qty REAL, reorder_level REAL, bin TEXT, fits TEXT, supplier TEXT, notes TEXT, photo TEXT, is_example INTEGER DEFAULT 0, created_at TEXT, updated_at TEXT);`);
+  if (!fs.existsSync(DB_FILE + '.loose-seeded')) {
+    for (const p of [
+      ['EXAMPLE Grease Cartridge', 'EX-GR-14', 'Example Brand', 'Fluids', 12, 6, 'Shelf F1', 'Most machines', 'Example Supplier'],
+      ['EXAMPLE V-Belt', 'EX-VB-A42', 'Example Brand', 'Belts', 1, 2, 'Peg wall B', 'Generators, compressors', 'Example Supplier'],
+      ['EXAMPLE Hydraulic Hose 1/2" x 36"', 'EX-HH-0836', 'Example Brand', 'Hydraulic', 3, 1, 'Hose rack', 'Loader, excavator', 'Example Supplier'],
+      ['EXAMPLE Grade 8 Bolt Kit', 'EX-BK-G8', 'Example Brand', 'Hardware', 0, 1, 'Bin H3', '', 'Example Supplier'],
+    ]) db.run('INSERT INTO loose_parts(name,part_number,manufacturer,category,qty,reorder_level,bin,fits,supplier,notes,is_example,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,1,?,?)', [...p, 'EXAMPLE part – delete when you add real parts.', now(), now()]);
+    save(); fs.writeFileSync(DB_FILE + '.loose-seeded', now());
+  }
+
   const app = express();
   app.use(express.json({ limit: '8mb' }));
   app.use(express.static(path.join(__dirname, 'public'), { setHeaders: (res, p) => { if (p.endsWith('sw.js')) res.set('Cache-Control', 'no-cache'); } }));
@@ -160,6 +172,31 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
     res.json({ ok: true });
   });
   api.delete('/parts/:id', (req, res) => { run('DELETE FROM parts_v2 WHERE id=?', [+req.params.id]); res.json({ ok: true }); });
+  // ---- Loose shop parts ----
+  const LF = ['name', 'part_number', 'manufacturer', 'category', 'qty', 'reorder_level', 'bin', 'fits', 'supplier', 'notes', 'photo'];
+  const lvals = b => LF.map(f => b[f] === '' || b[f] === undefined ? null : b[f]);
+  api.get('/loose', (req, res) => res.json(all(`SELECT id,${LF.filter(f => f !== 'photo')},is_example,updated_at,(photo IS NOT NULL AND photo<>'') has_photo FROM loose_parts ORDER BY is_example, name COLLATE NOCASE`)));
+  api.get('/loose/:id', (req, res) => { const p = get('SELECT * FROM loose_parts WHERE id=?', [+req.params.id]); p ? res.json(p) : res.status(404).json({ error: 'Not found' }); });
+  api.get('/loose/:id/photo', (req, res) => {
+    const r = get('SELECT photo FROM loose_parts WHERE id=?', [+req.params.id]);
+    const m = r && r.photo && /^data:(image\/[a-z+]+);base64,(.*)$/.exec(r.photo);
+    if (!m) return res.status(404).end();
+    res.set('Content-Type', m[1]).set('Cache-Control', 'private, max-age=60').send(Buffer.from(m[2], 'base64'));
+  });
+  api.post('/loose', (req, res) => {
+    if (!req.body.name) return res.status(400).json({ error: 'Part name is required' });
+    res.status(201).json({ id: run(`INSERT INTO loose_parts(${LF},created_at,updated_at) VALUES(${LF.map(() => '?')},?,?)`, [...lvals(req.body), now(), now()]) });
+  });
+  api.put('/loose/:id', (req, res) => {
+    if (!req.body.name) return res.status(400).json({ error: 'Part name is required' });
+    run(`UPDATE loose_parts SET ${LF.map(f => f + '=?')},updated_at=? WHERE id=?`, [...lvals(req.body), now(), +req.params.id]); res.json({ ok: true });
+  });
+  api.post('/loose/:id/qty', (req, res) => {
+    const d = Number(req.body.delta) || 0;
+    run('UPDATE loose_parts SET qty=MAX(0,COALESCE(qty,0)+?),updated_at=? WHERE id=?', [d, now(), +req.params.id]);
+    const p = get('SELECT qty FROM loose_parts WHERE id=?', [+req.params.id]); p ? res.json(p) : res.status(404).json({ error: 'Not found' });
+  });
+  api.delete('/loose/:id', admin, (req, res) => { run('DELETE FROM loose_parts WHERE id=?', [+req.params.id]); res.json({ ok: true }); });
   // Photo only update (equipment)
   api.put('/equipment/:id/photo', (req, res) => { run('UPDATE equipment SET photo=?,updated_at=? WHERE id=?', [req.body.photo || null, now(), +req.params.id]); res.json({ ok: true }); });
 

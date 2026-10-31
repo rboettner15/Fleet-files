@@ -28,8 +28,15 @@ Five equipment items named `EXAMPLE – …` are seeded once on first start. Del
 ## API (all need header `x-access-code`)
 `GET/POST /api/equipment`, `GET/PUT /api/equipment/:id`, `DELETE /api/equipment/:id` (+ `x-admin-code`),
 `GET/POST /api/equipment/:id/notes`, `GET/POST /api/equipment/:id/service`, `GET /api/equipment/:id/photo`.
-`PUT /api/equipment/:id/photo` (`{photo: dataURL|null}`), `GET /api/parts` (all parts with their machine name/unit, used by the main search bar, which finds equipment and parts), `GET/POST /api/equipment/:id/parts`, `GET/PUT/DELETE /api/parts/:id`, `GET /api/parts/:id/photo`.
+`PUT /api/equipment/:id/photo` (`{photo: dataURL|null}`), `GET /api/parts` (all machine parts with their machine name/unit, used by the Parts page search), `GET/POST /api/equipment/:id/parts`, `GET/PUT/DELETE /api/parts/:id`, `GET /api/parts/:id/photo`.
 Parts fields: name, part_number, manufacturer, qty, reorder_level (LOW when qty ≤ reorder_level), bin, supplier, price, url, notes, photo. EXAMPLE parts are seeded once.
+
+## Parts page (shop parts, v7)
+The main screen has an **Equipment | Parts** switch under the header. The **Parts** page holds loose spare parts lying around the shop that aren't tied to a machine: name, part #, brand, category, qty on hand, low-stock level, location/bin, which machines it fits, supplier, notes, and a photo (resized on the phone and stored in the DB like equipment photos).
+- Filter chips by category and All / In stock / Low stock. Tap a part for big **− / +** quantity buttons; Edit to change details; Delete needs the admin code.
+- The search bar on this page searches **any** part: shop parts plus every machine's parts (shown under "On Equipment" with the machine name and unit #). Tapping a machine part opens that machine's Parts tab with the part highlighted. The Equipment page search is equipment-only.
+- Stored in the new table `loose_parts` (`CREATE TABLE IF NOT EXISTS`). Four `EXAMPLE` shop parts are seeded once (flag file `fleet.db.loose-seeded`), so they don't come back after you delete them.
+- API: `GET/POST /api/loose`, `GET/PUT/DELETE /api/loose/:id` (DELETE needs `x-admin-code`), `POST /api/loose/:id/qty` (`{delta:+1|-1}`), `GET /api/loose/:id/photo`.
 
 ## Procedures tab (v4)
 Each equipment piece has a **Procedures** tab next to Notes / Service / Parts:
