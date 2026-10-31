@@ -171,3 +171,25 @@ body.login-bg .login{padding-top:24vh}
 header{background:linear-gradient(90deg,rgba(8,10,14,.82) 0%,rgba(8,10,14,.55) 55%,rgba(8,10,14,.35) 100%),linear-gradient(180deg,rgba(8,10,14,.25),rgba(8,10,14,.6)),url(/photos/header-semis.webp) center 40%/cover no-repeat,#0f1114;backdrop-filter:none;-webkit-backdrop-filter:none}
 header h1{text-shadow:0 2px 6px rgba(0,0,0,.85),0 0 2px #000}
 header .icon-btn{background:rgba(15,17,20,.72)}
+
+/* ---- v14 ✕ delete + Select / mass delete ---- */
+.card,.pcard,.tcard,.item.xrow{position:relative}
+.xdel{position:absolute;top:6px;right:6px;z-index:2;display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;
+  background:rgba(15,17,20,.85);border:1.5px solid rgba(239,68,68,.75);color:#f87171;font:700 16px/1 -apple-system,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.xdel:active{background:#dc2626;color:#fff}
+.xdel::before{content:'';position:absolute;inset:-6px;border-radius:50%} /* ~46px touch target */
+.card,.pcard,.tcard{padding-right:46px!important}
+.item.xrow{padding-right:46px}
+.tcard .chev,.pcard .chev{margin-right:2px}
+.seltools{display:flex;justify-content:flex-end;margin:-4px 0 6px}
+.selbtn{min-height:40px;padding:6px 14px;font-size:14px}
+body.selmode .xdel,body.selmode .fab,body.selmode .seltools{display:none!important}
+body.selmode [data-sel]{outline:2px dashed rgba(255,212,0,.35);outline-offset:-2px}
+body.selmode [data-sel]::after{content:'';position:absolute;top:8px;right:8px;width:28px;height:28px;border-radius:8px;border:2.5px solid #ffd400;background:rgba(15,17,20,.8)}
+body.selmode [data-sel].sel{outline:3px solid #ffd400}
+body.selmode [data-sel].sel::after{content:'✓';background:#ffd400;color:#111;font:900 20px/28px -apple-system,sans-serif;text-align:center}
+body.selmode #app{padding-bottom:190px}
+#selbar{position:fixed;left:0;right:0;bottom:0;z-index:15;padding:12px 14px calc(12px + env(safe-area-inset-bottom));background:rgba(10,14,19,.96);border-top:3px solid #ffd400;display:grid;gap:8px}
+#selbar .row{display:flex;gap:8px}#selbar .row .btn{flex:1;min-height:48px}
+#selbar .selcount{font-size:15px;color:var(--muted)}#selbar .selcount b{color:#ffd400;font-size:18px}
+#seldel[disabled]{opacity:.45}

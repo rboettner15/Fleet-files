@@ -99,6 +99,13 @@ The app needs an always-on server with a persistent disk (for the SQLite file). 
 - **Render (simplest dashboard):** Starter web service **$7/mo** + persistent disk **$0.25/GB/mo** (render.com/pricing, checked Oct 2026). Free tier cannot attach a disk, so data would be lost on restart — don't use free.
 Both give a permanent HTTPS URL, so the home-screen app keeps working.
 
+## Deleting things (v14)
+
+- **✕ on every card.** Machines, shop parts, machine parts, to-dos, priority items, and inside a machine: notes, service records, checklists, inspections and manuals. Tapping ✕ never opens the card. It always asks first: “Delete <name>? This can’t be undone.” → **Cancel** or red **Delete**.
+- **Deleting a machine** also deletes its notes, service records, parts, checklists, inspections and manual files. Linked to-dos and priority items are kept (just unlinked). The confirm box says so.
+- **Mass delete.** On Equipment, Parts, To Do List and Priority, tap **☑ Select**. Tap cards to tick them, or **Select all** to tick everything currently shown (after your search/filters). Then tap red **Delete (N)** and confirm “Delete N items?”. **Done** leaves select mode.
+- **Who can delete:** ✕ and Select only show for people allowed to delete that kind of item (admins always; members per Settings → People toggles, by default parts only). The server checks this too (`POST /api/bulk-delete {kind, ids}` returns 403 otherwise).
+
 ## CREDITS (photos)
 All photos are from Wikimedia Commons, resized/cropped only, stored in `public/photos/`. Also shown in the app under Settings → Photo Credits.
 

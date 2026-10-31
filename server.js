@@ -447,6 +447,21 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
     const title = String(req.body.title || '').trim(); if (!title) return res.status(400).json({ error: 'Title is required' });
     run('UPDATE documents SET title=?,updated_at=? WHERE id=?', [title, now(), +req.params.id]); res.json({ ok: true });
   });
+  // v14 mass delete: same rules + same side effects as the single deletes, one permission check for the kind
+  const BULK = {
+    equipment: { perm: 'eq_delete', del: id => { const docs = all('SELECT stored_name FROM documents WHERE equipment_id=?', [id]);
+      db.run('DELETE FROM equipment WHERE id=?', [id]); db.run('UPDATE todos SET equipment_id=NULL WHERE equipment_id=?', [id]); db.run('UPDATE priority_items SET equipment_id=NULL WHERE equipment_id=?', [id]);
+      for (const d of docs) fs.rm(path.join(path.dirname(DB_FILE), 'docs', path.basename(d.stored_name)), { force: true }, () => {}); } },
+    loose: { perm: 'parts_delete', del: id => db.run('DELETE FROM loose_parts WHERE id=?', [id]) },
+    parts: { perm: 'parts_delete', del: id => db.run('DELETE FROM parts_v2 WHERE id=?', [id]) },
+    todos: { perm: 'todo_delete', del: id => db.run('DELETE FROM todos WHERE id=?', [id]) },
+    priority: { perm: 'pri_delete', del: id => db.run('DELETE FROM priority_items WHERE id=?', [id]) } };
+  api.post('/bulk-delete', (req, res) => { const B = BULK[req.body.kind]; if (!B) return res.status(400).json({ error: 'Unknown kind' });
+    if (!req.perms[B.perm]) return res.status(403).json({ error: 'You don’t have permission to do that. Ask an admin.' });
+    const ids = [...new Set((Array.isArray(req.body.ids) ? req.body.ids : []).map(Number).filter(n => Number.isInteger(n) && n > 0))].slice(0, 1000);
+    if (!ids.length) return res.status(400).json({ error: 'Nothing selected' });
+    for (const id of ids) B.del(id); save(); res.json({ ok: true, deleted: ids.length }); });
+
   api.delete('/docs/:id', need('records_delete'), (req, res) => {
     const d = get('SELECT stored_name FROM documents WHERE id=?', [+req.params.id]);
     run('DELETE FROM documents WHERE id=?', [+req.params.id]);

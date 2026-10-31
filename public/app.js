@@ -41,6 +41,7 @@ async function demoApi(path,opt){
   let x;
   if(!d.checklists){d.checklists=[];d.inspections=[];d.equipment.filter(e=>e.is_example).forEach(e=>d.checklists.push({id:nid(),equipment_id:e.id,name:'EXAMPLE – Daily Pre-Op Inspection',items:DEMO_CHECK.slice(),is_example:1,created_at:now,updated_at:now}));demoSave(d);}
   if(path==='/check')return{ok:true};
+  if(m==='DELETE'&&(x=path.match(/^\/(notes|service|inspections)\/(\d+)$/))){const k=x[1],id=+x[2];d[k]=(d[k]||[]).filter(r=>r.id!==id);demoSave(d);return{ok:true};}
   if(path==='/me')return DEMO_ME;
   if(path==='/logout')return{ok:true};
   if(path.startsWith('/people')||path==='/permissions'){
@@ -119,7 +120,7 @@ async function demoApi(path,opt){
   if(x=path.match(/^\/equipment\/(\d+)$/)){const id=+x[1],i=d.equipment.findIndex(e=>e.id===id);if(i<0)throw new Error('Not found');
     if(m==='GET')return{...d.equipment[i],last_service:lastSvc(id)};
     if(m==='PUT'){if(!b.name)throw new Error('Name is required');d.equipment[i]=num({...d.equipment[i],...clean(b),id,updated_at:now},['meter','year']);demoSave(d);return{ok:true};}
-    if(m==='DELETE'){d.equipment.splice(i,1);['notes','service','parts','checklists','inspections'].forEach(k=>d[k]=(d[k]||[]).filter(r=>r.equipment_id!==id));(d.todos||[]).forEach(t=>{if(t.equipment_id===id)t.equipment_id=null;});demoSave(d);return{ok:true};}}
+    if(m==='DELETE'){d.equipment.splice(i,1);['notes','service','parts','checklists','inspections'].forEach(k=>d[k]=(d[k]||[]).filter(r=>r.equipment_id!==id));(d.todos||[]).forEach(t=>{if(t.equipment_id===id)t.equipment_id=null;});(d.pitems||[]).forEach(t=>{if(t.equipment_id===id)t.equipment_id=null;});demoSave(d);return{ok:true};}}
   if(x=path.match(/^\/equipment\/(\d+)\/photo$/)){const e=d.equipment.find(e=>e.id===+x[1]);e.photo=b.photo||null;e.updated_at=now;demoSave(d);return{ok:true};}
   if(x=path.match(/^\/equipment\/(\d+)\/(notes|service|parts)$/)){const id=+x[1],k=x[2];
     if(m==='GET'){if(k==='notes')return d.notes.filter(n=>n.equipment_id===id).sort((p,q)=>q.created_at.localeCompare(p.created_at));
@@ -188,6 +189,7 @@ function login(){
 
 let routeMe=0;
 function route(){
+  if(typeof SEL!=='undefined'&&SEL.on)selStop();
   demoBanner();
   if(isDemo()&&!store.name)store.name='Demo User';
   if(!isDemo()&&!store.token)return login();
@@ -201,7 +203,7 @@ function route(){
 let cache=[];
 async function list(){
   header('Fleet Files',false);
-  app.innerHTML=SEG('eq')+`<input class="search" id="q" type="search" placeholder="🔍  Search name, unit #, make, VIN…" value="${esc(state.q)}">
+  app.innerHTML=SEG('eq')+SELBTN('eq')+`<input class="search" id="q" type="search" placeholder="🔍  Search name, unit #, make, VIN…" value="${esc(state.q)}">
    <div class="chips" id="tc"></div><div class="chips" id="sc"></div><div id="list"><div class="empty">Loading…</div></div>
    <button class="btn primary fab" data-perm="eq_add" id="add">＋ Add Equipment</button>`;
   const chips=(el,arr,key)=>{el.innerHTML=['all',...arr].map(v=>`<button class="chip ${state[key]===v?'on':''}" data-v="${esc(v)}">${v==='all'?(key==='type'?'All types':'All status'):esc(v)}</button>`).join('')+editChip(key);
@@ -218,7 +220,7 @@ function draw(){
   const rows=cache.filter(e=>(state.type==='all'||e.type===state.type)&&(state.status==='all'||e.status===state.status)&&
     (!q||[e.name,e.unit,e.make,e.model,e.vin,e.location,e.type].join(' ').toLowerCase().includes(q)));
   $('#list').innerHTML=rows.length?`<div class="mini">${rows.length} of ${cache.length} units</div>`+rows.map(e=>`
-   <button class="card s-${sc(e.status)}" onclick="location.hash='#/eq/${e.id}'">
+   <button class="card s-${sc(e.status)}" data-sel="equipment" data-id="${e.id}" onclick="location.hash='#/eq/${e.id}'">${X('equipment',e.id,e.name)}
     <div class="thumb"><img loading="lazy" src="${e.photo_src?e.photo_src:e.has_photo?`/api/equipment/${e.id}/photo?t=${encodeURIComponent(store.token||'')}&v=${encodeURIComponent(e.updated_at)}`:typeImg(e.type)}" alt="" onerror="this.src='${typeImg(e.type)}'"></div>
     <div class="main"><div class="name">${esc(e.name)}</div>
      <div class="sub">${esc([e.unit&&('#'+e.unit),e.year,e.make,e.model].filter(Boolean).join(' · '))}</div>
@@ -258,12 +260,12 @@ async function tab(e){
     $('#post').onclick=async()=>{const body=$('#nb').value.trim();if(!body)return toast('Type a note first');
       try{await api(`/equipment/${e.id}/notes`,{method:'POST',body:{author:store.name,body}});toast('Note posted');tab(e);}catch(x){toast(x.message);}};
     const ns=await api(`/equipment/${e.id}/notes`).catch(()=>[]);
-    $('#nl').innerHTML=ns.length?ns.map(n=>`<div class="item"><div class="meta"><b>${esc(n.author)}</b><span>${fmtTime(n.created_at)}</span></div><div class="body">${esc(n.body)}</div></div>`).join(''):'<div class="empty">No notes yet.</div>';
+    $('#nl').innerHTML=ns.length?ns.map(n=>`<div class="item xrow">${X('notes',n.id,'note by '+(n.author||''))}<div class="meta"><b>${esc(n.author)}</b><span>${fmtTime(n.created_at)}</span></div><div class="body">${esc(n.body)}</div></div>`).join(''):'<div class="empty">No notes yet.</div>';
     return;}
   tb.innerHTML=`<button class="btn primary block" data-perm="records_add" id="addsvc">＋ Add Service Record</button><div id="sl"><div class="empty">Loading…</div></div>`;
   $('#addsvc').onclick=()=>serviceForm(e);
   const ss=await api(`/equipment/${e.id}/service`).catch(()=>[]);
-  $('#sl').innerHTML=ss.length?ss.map(s=>`<div class="item"><div class="meta"><b>${fmtDate(s.date)}</b><span>${s.meter!=null?Number(s.meter).toLocaleString()+' '+(e.meter_unit||''):''}</span></div>
+  $('#sl').innerHTML=ss.length?ss.map(s=>`<div class="item xrow">${X('service',s.id,'service record '+fmtDate(s.date))}<div class="meta"><b>${fmtDate(s.date)}</b><span>${s.meter!=null?Number(s.meter).toLocaleString()+' '+(e.meter_unit||''):''}</span></div>
     <div class="body"><b>${esc(s.work_done)}</b></div>${s.parts_used?`<div class="mini">Parts: ${esc(s.parts_used)}</div>`:''}
     <div class="mini">${s.performed_by?'By '+esc(s.performed_by):''}${s.cost!=null?' · $'+Number(s.cost).toFixed(2):''}</div></div>`).join(''):'<div class="empty">No service records yet.</div>';
 }
@@ -355,7 +357,7 @@ async function partsTab(e){
     const rows=parts.filter(p=>!q||[p.name,p.part_number,p.manufacturer,p.bin,p.supplier,p.notes].join(' ').toLowerCase().includes(q));
     const low=parts.filter(isLow).length;
     $('#pl').innerHTML=(low?`<div class="lowbar">⚠ ${low} part${low>1?'s':''} at or below reorder level</div>`:'')+
-     (rows.length?rows.map(p=>`<button class="pcard ${isLow(p)?'low':''}" data-id="${p.id}">
+     (rows.length?rows.map(p=>`<button class="pcard ${isLow(p)?'low':''}" data-id="${p.id}">${X('parts',p.id,p.name)}
        <div class="thumb">${p.photo_src?`<img src="${p.photo_src}" alt="">`:p.has_photo?`<img loading="lazy" src="/api/parts/${p.id}/photo?t=${encodeURIComponent(store.token||'')}&v=${encodeURIComponent(p.updated_at)}" alt="">`:'🔩'}</div>
        <div class="main"><div class="name">${esc(p.name)}</div>
         <div class="sub">${esc([p.part_number&&('#'+p.part_number),p.manufacturer].filter(Boolean).join(' · '))}</div>
@@ -428,11 +430,11 @@ async function procTab(e){
   $('#addc').onclick=()=>checklistForm(e);
   if($('#docf'))$('#docf').onchange=ev=>{const f=ev.target.files[0];ev.target.value='';if(f)uploadForm(e,f);};
   const [cs,ds]=await Promise.all([api(`/equipment/${e.id}/checklists`).catch(()=>[]),api(`/equipment/${e.id}/docs`).catch(()=>[])]);
-  $('#cl').innerHTML=cs.length?cs.map(c=>`<button class="pcard ck" data-id="${c.id}"><div class="thumb">📋</div><div class="main"><div class="name">${esc(c.name)}</div>
+  $('#cl').innerHTML=cs.length?cs.map(c=>`<button class="pcard ck" data-id="${c.id}">${X('checklists',c.id,c.name)}<div class="thumb">📋</div><div class="main"><div class="name">${esc(c.name)}</div>
     <div class="sub">${c.items.length} item${c.items.length===1?'':'s'} · ${c.last_done?'Last done '+fmtDate(c.last_done):'Not done yet'}</div></div><div class="chev">›</div></button>`).join('')
     :'<div class="empty">No checklists yet. Tap “New Checklist”.</div>';
   $('#cl').querySelectorAll('.ck').forEach(b=>b.onclick=()=>checklistView(e,cs.find(c=>c.id===+b.dataset.id)));
-  $('#dl').innerHTML=ds.length?ds.map(d=>`<button class="pcard dc" data-id="${d.id}"><div class="thumb">${docIcon(d)}</div><div class="main"><div class="name">${esc(d.title)}</div>
+  $('#dl').innerHTML=ds.length?ds.map(d=>`<button class="pcard dc" data-id="${d.id}">${X('docs',d.id,d.title)}<div class="thumb">${docIcon(d)}</div><div class="main"><div class="name">${esc(d.title)}</div>
     <div class="sub">${esc(d.filename||'')} · ${fmtSize(d.size||0)}</div><div class="sub">Added ${fmtDate(d.created_at)}${d.uploaded_by?' by '+esc(d.uploaded_by):''}</div></div><div class="chev">›</div></button>`).join('')
     :(isDemo()?'':'<div class="empty">No manuals yet.</div>');
   $('#dl').querySelectorAll('.dc').forEach(b=>b.onclick=()=>docSheet(e,ds.find(d=>d.id===+b.dataset.id)));
@@ -446,7 +448,7 @@ async function checklistView(e,c){
   $('#x').onclick=close;$('#ed').onclick=()=>checklistForm(e,c);$('#run').onclick=()=>runInspection(e,c);
   const hs=await api(`/checklists/${c.id}/inspections`).catch(()=>[]);
   if(!$('#hl'))return;
-  $('#hl').innerHTML=hs.length?hs.map(h=>`<button class="pcard hi ${h.fail_count?'low':'ok'}" data-id="${h.id}"><div class="main"><div class="name">${fmtDate(h.date)}</div>
+  $('#hl').innerHTML=hs.length?hs.map(h=>`<button class="pcard hi ${h.fail_count?'low':'ok'}" data-id="${h.id}">${X('inspections',h.id,'inspection '+fmtDate(h.date))}<div class="main"><div class="name">${fmtDate(h.date)}</div>
     <div class="sub">By ${esc(h.performed_by||'—')} · ${fmtTime(h.created_at)}</div></div>
     <div class="qty">${h.fail_count?`<em>${h.fail_count} FAIL</em>`:'<b class="pass">✓</b><span>all pass</span>'}</div></button>`).join(''):'<div class="empty">No inspections yet.</div>';
   $('#hl').querySelectorAll('.hi').forEach(b=>b.onclick=()=>inspectionView(e,c,hs.find(h=>h.id===+b.dataset.id)));
@@ -531,7 +533,7 @@ let loose=[],machParts=[];
 async function partsPage(){
   header('Fleet Files',false);
   state.lq=state.lq||'';state.lcat=state.lcat||'all';state.lstock=state.lstock||'all';
-  app.innerHTML=SEG('parts')+`<input class="search" id="lq" type="search" placeholder="🔍  Search any part, part #, brand, bin…" value="${esc(state.lq)}">
+  app.innerHTML=SEG('parts')+SELBTN('parts')+`<input class="search" id="lq" type="search" placeholder="🔍  Search any part, part #, brand, bin…" value="${esc(state.lq)}">
    <div class="chips" id="lc"></div><div class="chips" id="ls"></div><div id="list"><div class="empty">Loading…</div></div>
    <button class="btn primary fab" data-perm="parts_add" id="add">＋ Add Part</button>`;
   $('#add').onclick=()=>looseForm();
@@ -555,7 +557,7 @@ function drawLoose(){
   const rows=loose.filter(p=>(state.lcat==='all'||p.category===state.lcat)&&(state.lstock==='all'||effStock(p)===state.lstock)&&(!q||partHit(p,q)));
   const thumb=p=>p.photo_src?`<img src="${p.photo_src}" alt="">`:p.has_photo?`<img loading="lazy" src="/api/loose/${p.id}/photo?t=${encodeURIComponent(store.token||'')}&v=${encodeURIComponent(p.updated_at)}" alt="">`:'🔩';
   let h=(q?`<div class="sec-h">🧰 Shop Parts (${rows.length})</div>`:`<div class="mini">${rows.length} of ${loose.length} shop parts${loose.filter(isLow).length?` · <b style="color:var(--orange)">${loose.filter(isLow).length} low</b>`:''}</div>`)+
-   (rows.length?rows.map(p=>`<button class="pcard lp ${isLow(p)?'low':''}" data-id="${p.id}"><div class="thumb">${thumb(p)}</div>
+   (rows.length?rows.map(p=>`<button class="pcard lp ${isLow(p)?'low':''}" data-sel="loose" data-id="${p.id}">${X('loose',p.id,p.name)}<div class="thumb">${thumb(p)}</div>
     <div class="main"><div class="name">${esc(p.name)}</div>
      <div class="sub">${esc([p.part_number&&('#'+p.part_number),p.manufacturer].filter(Boolean).join(' · '))}</div>
      <div class="sub">${p.category?`<span class="badge b-cat">${esc(p.category)}</span>`:''}${p.stock?`<span class="badge b-stk">${esc(p.stock)}</span>`:''}${p.is_example?'<span class="badge b-ex">Example</span>':''}${p.bin?' 📍 '+esc(p.bin):''}</div></div>
@@ -563,7 +565,7 @@ function drawLoose(){
    :`<div class="empty">${loose.length?'No shop parts match.':'No shop parts yet. Tap “Add Part”.'}</div>`);
   if(q){const mp=machParts.filter(p=>partHit(p,q)).slice(0,50);
     h+=`<div class="sec-h" style="margin-top:18px">🚜 On Equipment (${mp.length})</div>`+(mp.length?mp.map(p=>`
-     <button class="pcard sp ${isLow(p)?'low':''}" data-id="${p.id}" data-eq="${p.equipment_id}"><div class="main"><div class="name">${esc(p.name)}</div>
+     <button class="pcard sp ${isLow(p)?'low':''}" data-sel="parts" data-id="${p.id}" data-eq="${p.equipment_id}">${X('parts',p.id,p.name)}<div class="main"><div class="name">${esc(p.name)}</div>
       <div class="sub">${p.part_number?'#'+esc(p.part_number):'No part #'}${p.manufacturer?' · '+esc(p.manufacturer):''}</div>
       <div class="sub">🚜 ${esc(p.equipment_name||'')}${p.equipment_unit?' · #'+esc(p.equipment_unit):''}</div></div>
       <div class="qty"><b>${p.qty??'–'}</b><span>on hand</span>${isLow(p)?'<em>LOW</em>':''}</div></button>`).join(''):'<div class="empty" style="padding:12px">No machine parts match.</div>');}
@@ -667,7 +669,7 @@ let todos=[];
 async function todoPage(){
   header('To Do List',false);
   state.tq=state.tq||'';state.tstat=state.tstat||'all';state.tpri=state.tpri||'all';
-  app.innerHTML=SEG('todo')+`<input class="search" id="tq" type="search" placeholder="🔍  Search to-dos, notes, machine…" value="${esc(state.tq)}">
+  app.innerHTML=SEG('todo')+SELBTN('todo')+`<input class="search" id="tq" type="search" placeholder="🔍  Search to-dos, notes, machine…" value="${esc(state.tq)}">
    <div class="chips" id="tsc"></div><div class="chips" id="tpc"></div><div id="list"><div class="empty">Loading…</div></div>
    <button class="btn primary fab" data-perm="todo_add" id="add">＋ Add To Do</button>`;
   $('#add').onclick=()=>todoForm();
@@ -688,7 +690,7 @@ function drawTodos(){if(!$('#tsc'))return;
    .sort((a,b)=>isDone(a)-isDone(b)||pi(a.priority)-pi(b.priority)||(a.due_date||'9999').localeCompare(b.due_date||'9999')||b.created_at.localeCompare(a.created_at));
   const open=todos.filter(t=>!isDone(t)).length,od=todos.filter(t=>!isDone(t)&&t.due_date&&t.due_date<today()).length;
   $('#list').innerHTML=`<div class="mini">${rows.length} of ${todos.length} to-dos · ${open} open${od?` · <b style="color:var(--red)">${od} overdue</b>`:''}</div>`+
-   (rows.length?rows.map(t=>`<div class="tcard ${isDone(t)?'done':''} ${prCls(t.priority)}" data-id="${t.id}">
+   (rows.length?rows.map(t=>`<div class="tcard ${isDone(t)?'done':''} ${prCls(t.priority)}" data-sel="todos" data-id="${t.id}">${X('todos',t.id,t.title)}
      <button class="tcheck" data-done="${t.id}" aria-label="${isDone(t)?'Mark not done':'Mark done'}">${isDone(t)?'✓':''}</button>
      <div class="main"><div class="name">${esc(t.title)}</div>
       <div class="sub"><span class="badge ${prCls(t.priority)}">${esc(t.priority||'')}</span><span class="badge b-td">${esc(t.status||'')}</span>${t.due_date?`<span class="due ${!isDone(t)&&t.due_date<today()?'late':''}">📅 ${fmtDate(t.due_date)}</span>`:''}</div>
@@ -739,7 +741,7 @@ async function refreshPriCount(){try{setPriCount((await api('/priority')).filter
 async function priorityPage(){
   header('Priority',false);
   state.pq=state.pq||'';state.pstat=state.pstat||'all';state.pcat=state.pcat||'all';
-  app.innerHTML=SEG('pri')+`<input class="search" id="pq" type="search" placeholder="🔍  Search priority items, notes, machine…" value="${esc(state.pq)}">
+  app.innerHTML=SEG('pri')+SELBTN('pri')+`<input class="search" id="pq" type="search" placeholder="🔍  Search priority items, notes, machine…" value="${esc(state.pq)}">
    <div class="chips" id="psc"></div><div class="chips" id="pcc"></div><div id="list"><div class="empty">Loading…</div></div>
    <button class="btn primary fab pri-fab" data-perm="pri_add" id="add">＋ Add Priority Item</button>`;
   $('#add').onclick=()=>priForm();
@@ -760,7 +762,7 @@ function drawPri(){if(!$('#psc'))return;
    .sort((a,b)=>piDone(a)-piDone(b)||(a.due_date||'9999').localeCompare(b.due_date||'9999')||b.created_at.localeCompare(a.created_at));
   const open=pitems.filter(t=>!piDone(t)).length,od=pitems.filter(t=>!piDone(t)&&t.due_date&&t.due_date<today()).length;setPriCount(open);
   $('#list').innerHTML=`<div class="mini">${rows.length} of ${pitems.length} priority items · ${open} open${od?` · <b style="color:var(--red)">${od} overdue</b>`:''}</div>`+
-   (rows.length?rows.map(t=>`<div class="tcard pcard ${piDone(t)?'done':''}" data-id="${t.id}">
+   (rows.length?rows.map(t=>`<div class="tcard pcard ${piDone(t)?'done':''}" data-sel="priority" data-id="${t.id}">${X('priority',t.id,t.title)}
      <button class="tcheck" data-done="${t.id}" aria-label="${piDone(t)?'Mark not done':'Mark done'}">${piDone(t)?'✓':''}</button>
      <div class="main"><div class="name">${esc(t.title)}</div>
       <div class="sub">${t.category?`<span class="badge b-pri">${esc(t.category)}</span>`:''}<span class="badge b-td">${esc(t.status||'')}</span>${t.due_date?`<span class="due ${!piDone(t)&&t.due_date<today()?'late':''}">📅 ${fmtDate(t.due_date)}</span>`:''}</div>
@@ -802,6 +804,42 @@ async function priForm(t){
     try{if(isNew)await api('/priority',{method:'POST',body:b});else await api('/priority/'+t.id,{method:'PUT',body:b});close();toast(isNew?'Priority item added':'Saved');priorityPage();}catch(x){toast(x.message);}};
   if(!isNew)$('#del').onclick=()=>adminConfirm(`Delete “${esc(t.title)}”?`,'This permanently removes this priority item. This cannot be undone.','Delete',async()=>{await api('/priority/'+t.id,{method:'DELETE'});close();toast('Deleted');priorityPage();});
 }
+// ---------- v14: ✕ delete on cards + Select / mass delete ----------
+const XK={equipment:{path:'/equipment/',perm:'eq_delete',one:'machine'},loose:{path:'/loose/',perm:'parts_delete',one:'part'},parts:{path:'/parts/',perm:'parts_delete',one:'part'},
+  todos:{path:'/todos/',perm:'todo_delete',one:'to-do'},priority:{path:'/priority/',perm:'pri_delete',one:'priority item'},notes:{path:'/notes/',perm:'records_delete',one:'note'},
+  service:{path:'/service/',perm:'records_delete',one:'service record'},checklists:{path:'/checklists/',perm:'records_delete',one:'checklist'},
+  inspections:{path:'/inspections/',perm:'records_delete',one:'inspection'},docs:{path:'/docs/',perm:'records_delete',one:'document'}};
+const EQ_NOTE='Its notes, service records, parts, checklists, inspections and manuals are deleted too. Linked to-dos and priority items are kept (just unlinked).';
+// ✕ is a span (cards are <button>s, and buttons can't hold buttons)
+const X=(k,id,nm)=>`<span class="xdel" role="button" tabindex="0" data-perm="${XK[k].perm}" data-xk="${k}" data-id="${id}" data-nm="${esc(nm||'')}" aria-label="Delete ${esc(nm||XK[k].one)}">✕</span>`;
+const SELPERM={eq:'eq_delete',parts:'parts_delete',todo:'todo_delete',pri:'pri_delete'};
+const SELBTN=pg=>`<div class="seltools" data-perm="${SELPERM[pg]}"><button class="btn selbtn" id="selbtn" onclick="selStart()">☑ Select</button></div>`;
+const SEL={on:false,set:new Set()};
+async function bulkDelete(items){const by={};items.forEach(s=>{const [k,id]=s.split(':');(by[k]=by[k]||[]).push(+id);});
+  for(const k in by){if(isDemo()){for(const id of by[k])await api(XK[k].path+id,{method:'DELETE'});}else await api('/bulk-delete',{method:'POST',body:{kind:k,ids:by[k]}});}}
+function selCards(){return [...document.querySelectorAll('#app [data-sel]')];}
+function selStart(){SEL.on=true;SEL.set.clear();document.body.classList.add('selmode');selDraw();}
+function selStop(){SEL.on=false;SEL.set.clear();document.body.classList.remove('selmode');const b=$('#selbar');if(b)b.remove();selCards().forEach(c=>c.classList.remove('sel'));}
+function selDraw(){if(!SEL.on)return;const vis=selCards(),keys=vis.map(c=>c.dataset.sel+':'+c.dataset.id);
+  for(const s of [...SEL.set])if(!keys.includes(s))SEL.set.delete(s); // only what's on screen (after filters/search)
+  vis.forEach(c=>c.classList.toggle('sel',SEL.set.has(c.dataset.sel+':'+c.dataset.id)));
+  let b=$('#selbar');if(!b){b=document.createElement('div');b.id='selbar';document.body.appendChild(b);}
+  const n=SEL.set.size,all=n&&n===vis.length;
+  const html=`<div class="selcount"><b>${n}</b> selected · ${vis.length} shown</div><div class="row"><button class="btn" id="selall">${all?'Clear all':`Select all (${vis.length})`}</button><button class="btn danger" id="seldel" ${n?'':'disabled'}>🗑 Delete (${n})</button></div><button class="btn block" id="seldone">Done</button>`;
+  if(b.innerHTML!==html)b.innerHTML=html;
+  $('#selall').onclick=()=>{if(all)SEL.set.clear();else keys.forEach(k=>SEL.set.add(k));selDraw();};
+  $('#seldone').onclick=selStop;
+  $('#seldel').onclick=()=>{const items=[...SEL.set];if(!items.length)return;const eq=items.some(s=>s.startsWith('equipment:'));
+    adminConfirm(`Delete ${items.length} item${items.length>1?'s':''}?`,`This can’t be undone.${eq?' '+EQ_NOTE:''}`,`Delete (${items.length})`,async()=>{await bulkDelete(items);close();toast(`Deleted ${items.length}`);selStop();route();});};
+}
+new MutationObserver(()=>{if(SEL.on)selDraw();}).observe(document.getElementById('app'),{childList:true,subtree:true});
+document.addEventListener('click',e=>{
+  const x=e.target.closest('.xdel');
+  if(x){e.preventDefault();e.stopPropagation();const k=x.dataset.xk,K=XK[k],nm=x.dataset.nm||('this '+K.one);
+    adminConfirm(`Delete “${esc(nm)}”?`,`This can’t be undone.${k==='equipment'?' '+EQ_NOTE:''}`,'Delete',async()=>{await api(K.path+x.dataset.id,{method:'DELETE'});close();toast('Deleted');route();});return;}
+  if(SEL.on){const c=e.target.closest('#app [data-sel]');if(c){e.preventDefault();e.stopPropagation();const key=c.dataset.sel+':'+c.dataset.id;SEL.set.has(key)?SEL.set.delete(key):SEL.set.add(key);selDraw();}}
+},true);
+document.addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.classList&&e.target.classList.contains('xdel')){e.preventDefault();e.target.click();}},true);
 // ---------- People & permissions (v11) ----------
 let ME=null;try{ME=JSON.parse(LS.ff_me||'null');}catch(e){}
 const DEMO_ME={user:{id:1,name:'Demo User',role:'admin',is_owner:true},perms:{eq_add:1,eq_delete:1,parts_add:1,parts_delete:1,todo_add:1,todo_delete:1,pri_add:1,pri_delete:1,records_add:1,records_delete:1,lists_edit:1}};
