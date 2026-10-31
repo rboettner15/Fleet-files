@@ -92,7 +92,11 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
     category: { table: 'loose_parts', col: 'category', seed: ['Filters', 'Belts', 'Hydraulic', 'Electrical', 'Hardware', 'Fluids', 'Tires', 'Engine', 'Other'] },
     // v9: status + stock. `role` keeps a built-in meaning (status color / automatic stock label) through renames.
     status: { table: 'equipment', col: 'status', required: true, seed: ['in service', 'in shop', 'down'], roles: { 'in service': 'ok', 'in shop': 'shop', 'down': 'down' } },
-    stock: { table: 'loose_parts', col: 'stock', seed: ['In stock', 'Low stock', 'Out of stock'], roles: { 'In stock': 'in', 'Low stock': 'low', 'Out of stock': 'out' } } };
+    stock: { table: 'loose_parts', col: 'stock', seed: ['In stock', 'Low stock', 'Out of stock'], roles: { 'In stock': 'in', 'Low stock': 'low', 'Out of stock': 'out' } },
+    // v10: To Do List
+    todo_status: { table: 'todos', col: 'status', required: true, seed: ['Open', 'In progress', 'Done'], roles: { 'Open': 'open', 'In progress': 'doing', 'Done': 'done' } },
+    priority: { table: 'todos', col: 'priority', required: true, seed: ['High', 'Normal', 'Low'], roles: { 'High': 'high', 'Normal': 'normal', 'Low': 'low' } } };
+  db.exec(`CREATE TABLE IF NOT EXISTS todos(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, notes TEXT, status TEXT, priority TEXT, equipment_id INTEGER, due_date TEXT, author TEXT, done_at TEXT, created_at TEXT, updated_at TEXT);`);
   // additive columns (ADD COLUMN only, never drops): lists.role, loose_parts.stock (blank = automatic from qty)
   const hasCol = (t, c) => all(`PRAGMA table_info(${t})`).some(r => r.name === c);
   if (!hasCol('lists', 'role')) db.exec('ALTER TABLE lists ADD COLUMN role TEXT');
@@ -114,6 +118,11 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
       for (const r of all(`SELECT DISTINCT ${L.col} v FROM ${L.table} WHERE ${L.col} IS NOT NULL AND TRIM(${L.col})<>''`)) addVal(k, r.v);
     }
     save(); fs.writeFileSync(DB_FILE + '.lists2-seeded', now());
+  }
+  if (!fs.existsSync(DB_FILE + '.lists3-seeded')) { // v10: to-do status + priority, seeded once
+    for (const k of ['todo_status', 'priority']) { const L = LISTS[k];
+      for (const v of L.seed) { addVal(k, v); db.run('UPDATE lists SET role=? WHERE kind=? AND value=? AND role IS NULL', [L.roles[v], k, v]); } }
+    save(); fs.writeFileSync(DB_FILE + '.lists3-seeded', now());
   }
 
   const app = express();
@@ -157,6 +166,7 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
   api.delete('/equipment/:id', admin, (req, res) => {
     const docs = all('SELECT stored_name FROM documents WHERE equipment_id=?', [+req.params.id]);
     run('DELETE FROM equipment WHERE id=?', [+req.params.id]);
+    run('UPDATE todos SET equipment_id=NULL WHERE equipment_id=?', [+req.params.id]); // keep the to-dos, just unlink
     for (const d of docs) fs.rm(path.join(path.dirname(DB_FILE), 'docs', path.basename(d.stored_name)), { force: true }, () => {});
     res.json({ ok: true });
   });
@@ -208,7 +218,7 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
   const kindOk = (req, res, next) => LISTS[req.params.kind] ? next() : res.status(404).json({ error: 'Unknown list' });
   api.get('/lists', (req, res) => { const roles = {};
     for (const r of all("SELECT kind,value,role FROM lists WHERE role IS NOT NULL")) (roles[r.kind] = roles[r.kind] || {})[r.value] = r.role;
-    res.json({ type: listVals('type'), category: listVals('category'), status: listVals('status'), stock: listVals('stock'), roles }); });
+    res.json({ type: listVals('type'), category: listVals('category'), status: listVals('status'), stock: listVals('stock'), todo_status: listVals('todo_status'), priority: listVals('priority'), roles }); });
   api.get('/lists/:kind/usage', kindOk, (req, res) => { const L = LISTS[req.params.kind];
     res.json({ count: get(`SELECT COUNT(*) c FROM ${L.table} WHERE ${L.col}=? COLLATE NOCASE`, [String(req.query.value || '')]).c }); });
   api.post('/lists/:kind', kindOk, (req, res) => { const v = String(req.body.value || '').trim(); if (!v) return res.status(400).json({ error: 'Enter a name' });
@@ -226,11 +236,32 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
     if (!findVal(k, v)) return res.status(404).json({ error: 'Not found' });
     let rep = String(req.query.replace || '').trim() || null;
     if (L.required) { const rest = listVals(k).filter(x => x.toLowerCase() !== v.toLowerCase());
-      if (!rest.length) return res.status(400).json({ error: 'Keep at least one status' }); if (!rep) rep = rest[0]; }
+      if (!rest.length) return res.status(400).json({ error: 'Keep at least one ' + (k === 'priority' ? 'priority' : 'status') }); if (!rep) rep = rest[0]; }
     if (rep && rep.toLowerCase() === v.toLowerCase()) return res.status(400).json({ error: 'Pick a different replacement' });
     db.run('DELETE FROM lists WHERE kind=? AND value=? COLLATE NOCASE', [k, v]);
     db.run(`UPDATE ${L.table} SET ${L.col}=?, updated_at=? WHERE ${L.col}=? COLLATE NOCASE`, [rep, now(), v]);
     if (rep) addVal(k, rep); save(); res.json({ ok: true }); });
+
+  // ---- To Do List (v10) ----
+  const roleOf = (k, r) => (get('SELECT value FROM lists WHERE kind=? AND role=?', [k, r]) || {}).value;
+  const TQ = `SELECT t.*, e.name equipment_name, e.unit equipment_unit FROM todos t LEFT JOIN equipment e ON e.id=t.equipment_id`;
+  const tvals = b => { const s = String(b.status || '').trim() || roleOf('todo_status', 'open') || listVals('todo_status')[0] || 'Open';
+    const p = String(b.priority || '').trim() || roleOf('priority', 'normal') || listVals('priority')[0] || 'Normal';
+    addVal('todo_status', s); addVal('priority', p);
+    return { title: String(b.title || '').trim(), notes: b.notes || null, status: s, priority: p, equipment_id: b.equipment_id ? +b.equipment_id : null, due_date: b.due_date || null }; };
+  const doneAt = (s, prev) => (roleOf('todo_status', 'done') || '').toLowerCase() === s.toLowerCase() ? (prev || now()) : null;
+  api.get('/todos', (req, res) => res.json(all(TQ + ' ORDER BY t.created_at DESC')));
+  api.get('/todos/:id', (req, res) => { const t = get(TQ + ' WHERE t.id=?', [+req.params.id]); t ? res.json(t) : res.status(404).json({ error: 'Not found' }); });
+  api.post('/todos', (req, res) => { const v = tvals(req.body); if (!v.title) return res.status(400).json({ error: 'Title is required' });
+    res.status(201).json({ id: run('INSERT INTO todos(title,notes,status,priority,equipment_id,due_date,author,done_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)',
+      [v.title, v.notes, v.status, v.priority, v.equipment_id, v.due_date, String(req.body.author || '').trim() || null, doneAt(v.status), now(), now()]) }); });
+  api.put('/todos/:id', (req, res) => { const t = get('SELECT * FROM todos WHERE id=?', [+req.params.id]); if (!t) return res.status(404).json({ error: 'Not found' });
+    const v = tvals(req.body); if (!v.title) return res.status(400).json({ error: 'Title is required' });
+    run('UPDATE todos SET title=?,notes=?,status=?,priority=?,equipment_id=?,due_date=?,done_at=?,updated_at=? WHERE id=?', [v.title, v.notes, v.status, v.priority, v.equipment_id, v.due_date, doneAt(v.status, t.done_at), now(), t.id]); res.json({ ok: true }); });
+  api.put('/todos/:id/done', (req, res) => { const t = get('SELECT * FROM todos WHERE id=?', [+req.params.id]); if (!t) return res.status(404).json({ error: 'Not found' });
+    const s = req.body.done ? (roleOf('todo_status', 'done') || 'Done') : (roleOf('todo_status', 'open') || listVals('todo_status')[0] || 'Open'); addVal('todo_status', s);
+    run('UPDATE todos SET status=?,done_at=?,updated_at=? WHERE id=?', [s, req.body.done ? now() : null, now(), t.id]); res.json({ ok: true, status: s }); });
+  api.delete('/todos/:id', admin, (req, res) => { run('DELETE FROM todos WHERE id=?', [+req.params.id]); res.json({ ok: true }); });
 
   // ---- Loose shop parts ----
   const LF = ['name', 'part_number', 'manufacturer', 'category', 'stock', 'qty', 'reorder_level', 'bin', 'fits', 'supplier', 'notes', 'photo'];

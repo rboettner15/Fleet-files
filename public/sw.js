@@ -1,4 +1,4 @@
-const CACHE='fleet-files-v12';
+const CACHE='fleet-files-v13';
 const SHELL=['/','/index.html','/app.js','/style.css','/manifest.webmanifest','/icon-192.png','/icon-512.png','/apple-touch-icon.png','/favicon.png','/photos/hero.jpg','/photos/pit-mobile.webp','/photos/pit-desktop.webp','/photos/credits.json','/photos/truck.jpg','/photos/dump-truck.jpg','/photos/trailer.jpg','/photos/loader.jpg','/photos/excavator.jpg','/photos/dozer.jpg','/photos/generator.jpg','/photos/other.jpg','/fonts/oxanium-latin-600-normal.woff2','/fonts/oxanium-latin-700-normal.woff2',];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)));self.skipWaiting();});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==CACHE).map(x=>caches.delete(x)))));self.clients.claim();});

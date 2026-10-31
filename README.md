@@ -38,6 +38,13 @@ The main screen has an **Equipment | Parts** switch under the header. The **Part
 - Stored in the new table `loose_parts` (`CREATE TABLE IF NOT EXISTS`). Four `EXAMPLE` shop parts are seeded once (flag file `fleet.db.loose-seeded`), so they don't come back after you delete them.
 - API: `GET/POST /api/loose`, `GET/PUT/DELETE /api/loose/:id` (DELETE needs `x-admin-code`), `POST /api/loose/:id/qty` (`{delta:+1|-1}`), `GET /api/loose/:id/photo`.
 
+## To Do List (v10)
+- Third main tab next to Equipment and Parts (`#/todo`). Own search (to-dos only: title, details, machine, who added), two editable chip rows: **Status** (Open / In progress / Done) and **Priority** (High / Normal / Low), each with ✎ Edit; “All” is fixed.
+- A to-do has title, details, status, priority, optional machine (tap it on the card to open that machine), optional due date (overdue shows red), who added it (your name from sign-in), created/updated/done times.
+- Tap the round check on a card (or ✓ Mark Done in the detail) to mark done / reopen. “Done” and “Open” keep working if renamed (roles).
+- Deleting a to-do needs the admin code. Deleting a status/priority in use moves those to-dos to Open / Normal (or the first left). Deleting a machine keeps its to-dos, just unlinked.
+- Additive: new `todos` table (`CREATE TABLE IF NOT EXISTS`), lists seeded once via `fleet.db.lists3-seeded`. API: `GET/POST /api/todos`, `GET/PUT /api/todos/:id`, `PUT /api/todos/:id/done {done}`, `DELETE /api/todos/:id` (admin). List kinds `todo_status`, `priority`.
+
 ## Editable types & categories (v8)
 - The **Types** chips (Equipment page) and **Category** chips (Parts page) end in a dashed **✎ Edit** chip. It opens a sheet to add, rename (type in the box), move ↑/↓, or delete.
 - Renaming updates every machine / shop part that uses the old name. Renaming onto an existing name merges them.

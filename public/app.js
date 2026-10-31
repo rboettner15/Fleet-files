@@ -47,12 +47,27 @@ async function demoApi(path,opt){
     d.equipment.forEach(e=>seen('type',e.type));(d.loose||[]).forEach(p=>seen('category',p.category));demoSave(d);}
   if(!d.lists.status){d.lists.status=STATUSES.slice();d.lists.stock=STOCKS.slice();d.lists.roles={status:{'in service':'ok','in shop':'shop','down':'down'},stock:{'In stock':'in','Low stock':'low','Out of stock':'out'}};
     d.equipment.forEach(e=>{if(e.status&&!d.lists.status.some(o=>o.toLowerCase()===e.status.toLowerCase()))d.lists.status.push(e.status);});demoSave(d);}
+  if(!d.todos)d.todos=[];
+  if(!d.lists.todo_status){d.lists.todo_status=['Open','In progress','Done'];d.lists.priority=['High','Normal','Low'];
+    d.lists.roles.todo_status={'Open':'open','In progress':'doing','Done':'done'};d.lists.roles.priority={'High':'high','Normal':'normal','Low':'low'};demoSave(d);}
   {const L=d.lists,has=(k,v)=>L[k].find(o=>o.toLowerCase()===String(v).trim().toLowerCase()),add=(k,v)=>{v=String(v||'').trim();if(v&&!has(k,v)){L[k].push(v);return true;}return false;};
-   const rec=k=>k==='type'||k==='status'?[d.equipment,k]:[d.loose||[],k],R=L.roles;
+   const rec=k=>k==='type'||k==='status'?[d.equipment,k]:k==='todo_status'?[d.todos,'status']:k==='priority'?[d.todos,'priority']:[d.loose||[],k],R=L.roles;
+   const rv=(k,r)=>Object.keys(R[k]||{}).find(v=>R[k][v]===r&&L[k].includes(v));
    if((m==='POST'||m==='PUT')&&/^\/equipment(\/\d+)?$/.test(path)){add('type',b.type);add('status',b.status);}
    if((m==='POST'||m==='PUT')&&/^\/loose(\/\d+)?$/.test(path)){add('category',b.category);add('stock',b.stock);}
-   if(path==='/lists')return{type:L.type.slice(),category:L.category.slice(),status:L.status.slice(),stock:L.stock.slice(),roles:JSON.parse(JSON.stringify(R))};
-   if(x=path.match(/^\/lists\/(type|category|status|stock)(\/usage|\/order)?(?:\?(.*))?$/)){const k=x[1],q=new URLSearchParams(x[3]||''),[arr,col]=rec(k);
+   if(x=path.match(/^\/todos(?:\/(\d+))?(\/done)?$/)){const id=x[1]&&+x[1],t=id&&d.todos.find(o=>o.id===id);if(id&&!t)throw new Error('Not found');
+     const eqn=o=>{const e=d.equipment.find(e=>e.id===+o.equipment_id);return{...o,equipment_name:e?e.name:null,equipment_unit:e?e.unit:null};};
+     const doneV=rv('todo_status','done')||'Done',openV=rv('todo_status','open')||L.todo_status[0];
+     if(x[2]){t.status=b.done?doneV:openV;add('todo_status',t.status);t.done_at=b.done?now:null;t.updated_at=now;demoSave(d);return{ok:true,status:t.status};}
+     if(m==='GET')return id?eqn(t):d.todos.map(eqn).sort((p,q)=>q.created_at.localeCompare(p.created_at));
+     if(m==='DELETE'){d.todos=d.todos.filter(o=>o.id!==id);demoSave(d);return{ok:true};}
+     const title=String(b.title||'').trim();if(!title)throw new Error('Title is required');
+     const v={title,notes:b.notes||null,status:String(b.status||'').trim()||openV,priority:String(b.priority||'').trim()||rv('priority','normal')||L.priority[0],equipment_id:b.equipment_id?+b.equipment_id:null,due_date:b.due_date||null,updated_at:now};
+     add('todo_status',v.status);add('priority',v.priority);const dn=v.status.toLowerCase()===doneV.toLowerCase();
+     if(m==='POST'){const o={id:nid(),...v,author:b.author||null,done_at:dn?now:null,created_at:now};d.todos.push(o);demoSave(d);return{id:o.id};}
+     Object.assign(t,v,{done_at:dn?(t.done_at||now):null});demoSave(d);return{ok:true};}
+   if(path==='/lists')return{type:L.type.slice(),category:L.category.slice(),status:L.status.slice(),stock:L.stock.slice(),todo_status:L.todo_status.slice(),priority:L.priority.slice(),roles:JSON.parse(JSON.stringify(R))};
+   if(x=path.match(/^\/lists\/(type|category|status|stock|todo_status|priority)(\/usage|\/order)?(?:\?(.*))?$/)){const k=x[1],q=new URLSearchParams(x[3]||''),[arr,col]=rec(k);
      const uses=v=>arr.filter(r=>r[col]&&r[col].toLowerCase()===String(v).toLowerCase());
      if(x[2]==='/usage')return{count:uses(q.get('value')||'').length};
      if(x[2]==='/order'){const vs=(b.values||[]).filter(v=>L[k].includes(v));L[k]=vs.concat(L[k].filter(v=>!vs.includes(v)));demoSave(d);return{ok:true};}
@@ -60,7 +75,7 @@ async function demoApi(path,opt){
      if(m==='PUT'){const from=b.from,to=String(b.to||'').trim(),i=L[k].indexOf(from);if(i<0)throw new Error('Not found');if(!to)throw new Error('Enter a name');
        const o=has(k,to),merged=!!(o&&o!==from);if(merged)L[k].splice(i,1);else L[k][i]=to;if(R[k]&&R[k][from]){if(!merged)R[k][to]=R[k][from];delete R[k][from];}uses(from).forEach(r=>{r[col]=merged?o:to;r.updated_at=now;});demoSave(d);return{ok:true,merged};}
      if(m==='DELETE'){const v=q.get('value'),i=L[k].findIndex(o=>o.toLowerCase()===String(v).toLowerCase());let rep=(q.get('replace')||'').trim()||null;if(i<0)throw new Error('Not found');
-       if(k==='status'){if(L.status.length<2)throw new Error('Keep at least one status');if(!rep)rep=L.status.find((o,j)=>j!==i);}
+       if(['status','todo_status','priority'].includes(k)){if(L[k].length<2)throw new Error('Keep at least one');if(!rep)rep=L[k].find((o,j)=>j!==i);}
        if(R[k])delete R[k][L[k][i]];L[k].splice(i,1);uses(v).forEach(r=>{r[col]=rep;r.updated_at=now;});if(rep)add(k,rep);demoSave(d);return{ok:true};}}}
   if(x=path.match(/^\/equipment\/(\d+)\/checklists$/)){const id=+x[1];
     if(m==='GET')return d.checklists.filter(c=>c.equipment_id===id).map(c=>{const ins=d.inspections.filter(i=>i.checklist_id===c.id);return{...c,inspection_count:ins.length,last_done:ins.map(i=>i.created_at).sort().pop()||null};}).sort((p,q)=>p.is_example-q.is_example||p.name.localeCompare(q.name));
@@ -80,7 +95,7 @@ async function demoApi(path,opt){
   if(x=path.match(/^\/equipment\/(\d+)$/)){const id=+x[1],i=d.equipment.findIndex(e=>e.id===id);if(i<0)throw new Error('Not found');
     if(m==='GET')return{...d.equipment[i],last_service:lastSvc(id)};
     if(m==='PUT'){if(!b.name)throw new Error('Name is required');d.equipment[i]=num({...d.equipment[i],...clean(b),id,updated_at:now},['meter','year']);demoSave(d);return{ok:true};}
-    if(m==='DELETE'){d.equipment.splice(i,1);['notes','service','parts','checklists','inspections'].forEach(k=>d[k]=(d[k]||[]).filter(r=>r.equipment_id!==id));demoSave(d);return{ok:true};}}
+    if(m==='DELETE'){d.equipment.splice(i,1);['notes','service','parts','checklists','inspections'].forEach(k=>d[k]=(d[k]||[]).filter(r=>r.equipment_id!==id));(d.todos||[]).forEach(t=>{if(t.equipment_id===id)t.equipment_id=null;});demoSave(d);return{ok:true};}}
   if(x=path.match(/^\/equipment\/(\d+)\/photo$/)){const e=d.equipment.find(e=>e.id===+x[1]);e.photo=b.photo||null;e.updated_at=now;demoSave(d);return{ok:true};}
   if(x=path.match(/^\/equipment\/(\d+)\/(notes|service|parts)$/)){const id=+x[1],k=x[2];
     if(m==='GET'){if(k==='notes')return d.notes.filter(n=>n.equipment_id===id).sort((p,q)=>q.created_at.localeCompare(p.created_at));
@@ -152,7 +167,7 @@ function route(){
   if(!isDemo()&&(!store.code||!store.name))return login();
   $('#menu').hidden=false;document.body.classList.remove('login-bg');
   const m=location.hash.match(/^#\/eq\/(\d+)/);
-  m?detail(+m[1]):location.hash==='#/parts'?partsPage():list();
+  m?detail(+m[1]):location.hash==='#/parts'?partsPage():location.hash==='#/todo'?todoPage():list();
 }
 
 let cache=[];
@@ -492,7 +507,7 @@ function docSheet(e,d){
   $('#del').onclick=()=>adminConfirm(`Delete “${esc(d.title)}”?`,'This permanently removes the file. This cannot be undone.','Delete',async a=>{await api('/docs/'+d.id,{method:'DELETE',admin:a});toast('Deleted');backToProc(e);});
 }
 // ---------- Shop Parts page (loose parts not tied to a machine) ----------
-const SEG=on=>`<div class="seg"><button class="${on==='eq'?'on':''}" onclick="location.hash=''">🚜 Equipment</button><button class="${on==='parts'?'on':''}" onclick="location.hash='#/parts'">🔩 Parts</button></div>`;
+const SEG=on=>`<nav class="seg seg3" aria-label="Main pages"><button class="${on==='eq'?'on':''}" onclick="location.hash=''"><i>🚜</i>Equipment</button><button class="${on==='parts'?'on':''}" onclick="location.hash='#/parts'"><i>🔩</i>Parts</button><button class="${on==='todo'?'on':''}" onclick="location.hash='#/todo'"><i>✅</i>To Do List</button></nav>`;
 let loose=[],machParts=[];
 async function partsPage(){
   header('Fleet Files',false);
@@ -579,13 +594,13 @@ function looseForm(p){
 }
 // ---------- Editable lists (equipment types, shop-part categories) ----------
 const STOCKS=['In stock','Low stock','Out of stock'];
-const LISTS={type:TYPES.slice(),category:CATS.slice(),status:STATUSES.slice(),stock:STOCKS.slice(),
-  roles:{status:{'in service':'ok','in shop':'shop','down':'down'},stock:{'In stock':'in','Low stock':'low','Out of stock':'out'}}};
+const LISTS={type:TYPES.slice(),category:CATS.slice(),status:STATUSES.slice(),stock:STOCKS.slice(),todo_status:['Open','In progress','Done'],priority:['High','Normal','Low'],
+  roles:{status:{'in service':'ok','in shop':'shop','down':'down'},stock:{'In stock':'in','Low stock':'low','Out of stock':'out'},todo_status:{'Open':'open','In progress':'doing','Done':'done'},priority:{'High':'high','Normal':'normal','Low':'low'}}};
 // a shop part's stock label: the one picked on the part, or automatic from qty (In / Low / Out roles)
 const roleVal=(k,r)=>Object.entries((LISTS.roles||{})[k]||{}).find(([v,x])=>x===r&&LISTS[k].includes(v))?.[0]||'';
 const autoStock=p=>p.qty==null||p.qty===''?'':Number(p.qty)<=0?roleVal('stock','out'):isLow(p)?roleVal('stock','low'):roleVal('stock','in');
 const effStock=p=>p.stock||autoStock(p);
-const LNAME={type:['type','types','machine','machines'],category:['category','categories','shop part','shop parts'],status:['status','statuses','machine','machines'],stock:['stock status','stock statuses','shop part','shop parts']};
+const LNAME={type:['type','types','machine','machines'],category:['category','categories','shop part','shop parts'],status:['status','statuses','machine','machines'],stock:['stock status','stock statuses','shop part','shop parts'],todo_status:['status','statuses','to-do','to-dos'],priority:['priority','priorities','to-do','to-dos']};
 async function loadLists(){try{const l=await api('/lists');if(l&&l.type){Object.assign(LISTS,l);LISTS.roles=l.roles||{};}}catch(e){}}
 const editChip=kind=>`<button class="chip chip-edit" data-edit="${kind}" aria-label="Edit ${LNAME[kind][1]}">✎ Edit</button>`;
 // <select> of the list + "New…" which reveals a text box
@@ -601,7 +616,7 @@ async function listEditor(kind,after){
      <div id="lerows">${vs.map((v,i)=>`<div class="lerow"><input class="lein" data-i="${i}" value="${esc(v)}" aria-label="${esc(v)}">
       <button class="btn lebtn" data-up="${i}" ${i?'':'disabled'} aria-label="Move up">↑</button><button class="btn lebtn" data-dn="${i}" ${i<vs.length-1?'':'disabled'} aria-label="Move down">↓</button>
       <button class="btn lebtn danger" data-del="${i}" aria-label="Delete ${esc(v)}">🗑</button></div>`).join('')||'<div class="empty">No '+many+' yet.</div>'}</div>
-     <label for="lenew">Add a new ${one}</label><div class="row"><input id="lenew" placeholder="e.g. ${({type:'skid steer',category:'Lights',status:'waiting on parts',stock:'On order'})[kind]}" style="flex:2"><button class="btn primary" id="leadd">＋ Add</button></div>
+     <label for="lenew">Add a new ${one}</label><div class="row"><input id="lenew" placeholder="e.g. ${({type:'skid steer',category:'Lights',status:'waiting on parts',stock:'On order',todo_status:'Waiting on parts',priority:'Urgent'})[kind]}" style="flex:2"><button class="btn primary" id="leadd">＋ Add</button></div>
      <button class="btn block" id="x" style="margin-top:16px">Done</button>`);
     $('#x').onclick=()=>{close();after();};
     $('#leadd').onclick=async()=>{const v=$('#lenew').value.trim();if(!v)return toast('Type a name first');
@@ -613,15 +628,88 @@ async function listEditor(kind,after){
     $('#modal').querySelectorAll('[data-dn]').forEach(b=>b.onclick=()=>move(+b.dataset.dn,+b.dataset.dn+1));
     $('#modal').querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{const v=vs[+b.dataset.del];
       let n=0;try{n=(await api(`/lists/${kind}/usage?value=`+encodeURIComponent(v))).count;}catch(x){}
-      if(kind==='status'&&LISTS.status.length<2)return toast('Keep at least one status');
+      const REQ={status:'ok',todo_status:'open',priority:'normal'};
+      if(REQ[kind]&&LISTS[kind].length<2)return toast('Keep at least one '+one);
       const rest=LISTS[kind].filter(t=>t.toLowerCase()!==v.toLowerCase());
-      const repl=kind==='type'?(rest.find(t=>t.toLowerCase()==='other')||''):kind==='status'?(rest.find(t=>LISTS.roles.status?.[t]==='ok')||rest[0]):'';
+      const repl=kind==='type'?(rest.find(t=>t.toLowerCase()==='other')||''):REQ[kind]?(rest.find(t=>LISTS.roles[kind]?.[t]===REQ[kind])||rest[0]):'';
       const to=kind==='stock'?'Automatic (from qty)':repl?`“${esc(repl)}”`:'blank (no '+one+')';
       const auto=kind==='stock'&&LISTS.roles.stock?.[v]?` Parts on Automatic won’t get the “${esc(v)}” label any more (the orange LOW warning still shows).`:'';
       const msg=(n?`<b>${n} ${n===1?thing:things}</b> use “${esc(v)}”. They’ll be set to ${to}.`:`No ${things} use “${esc(v)}”.`)+auto;
       adminConfirm(`Delete “${esc(v)}”?`,msg,'Delete',async a=>{await api(`/lists/${kind}?value=${encodeURIComponent(v)}&replace=${encodeURIComponent(repl)}`,{method:'DELETE',admin:a});
-        if(kind==='type'&&state.type===v)state.type='all';if(kind==='category'&&state.lcat===v)state.lcat='all';if(kind==='status'&&state.status===v)state.status='all';if(kind==='stock'&&state.lstock===v)state.lstock='all';await loadLists();toast('Deleted');draw();});});
+        if(kind==='type'&&state.type===v)state.type='all';if(kind==='category'&&state.lcat===v)state.lcat='all';if(kind==='status'&&state.status===v)state.status='all';if(kind==='stock'&&state.lstock===v)state.lstock='all';if(kind==='todo_status'&&state.tstat===v)state.tstat='all';if(kind==='priority'&&state.tpri===v)state.tpri='all';await loadLists();toast('Deleted');draw();});});
   };draw();
+}
+// ---------- To Do List (v10) ----------
+const tdRole=s=>((LISTS.roles||{}).todo_status||{})[s];
+const isDone=t=>tdRole(t.status)==='done';
+const prCls=p=>({high:'pr-high',normal:'pr-normal',low:'pr-low'})[((LISTS.roles||{}).priority||{})[p]]||'pr-custom';
+const today=()=>{const d=new Date();return new Date(d-d.getTimezoneOffset()*6e4).toISOString().slice(0,10);};
+let todos=[];
+async function todoPage(){
+  header('To Do List',false);
+  state.tq=state.tq||'';state.tstat=state.tstat||'all';state.tpri=state.tpri||'all';
+  app.innerHTML=SEG('todo')+`<input class="search" id="tq" type="search" placeholder="🔍  Search to-dos, notes, machine…" value="${esc(state.tq)}">
+   <div class="chips" id="tsc"></div><div class="chips" id="tpc"></div><div id="list"><div class="empty">Loading…</div></div>
+   <button class="btn primary fab" id="add">＋ Add To Do</button>`;
+  $('#add').onclick=()=>todoForm();
+  let qt;$('#tq').oninput=e=>{state.tq=e.target.value;clearTimeout(qt);qt=setTimeout(drawTodos,150);};
+  const chipRow=(id,kind,key,allLbl)=>{$(id).onclick=e=>{if(e.target.closest('[data-edit]'))return listEditor(kind,todoPage);const b=e.target.closest('.chip');if(!b)return;state[key]=b.dataset.v;drawTodos();};};
+  chipRow('#tsc','todo_status','tstat');chipRow('#tpc','priority','tpri');
+  await loadLists();
+  try{todos=await api('/todos');}catch(e){$('#list').innerHTML=`<div class="empty">${esc(e.message)}</div>`;return;}
+  drawTodos();
+}
+function drawTodos(){if(!$('#tsc'))return;
+  if(state.tstat!=='all'&&!LISTS.todo_status.includes(state.tstat))state.tstat='all';if(state.tpri!=='all'&&!LISTS.priority.includes(state.tpri))state.tpri='all';
+  const row=(el,arr,key,allLbl,kind)=>{$(el).innerHTML=['all',...arr].map(v=>`<button class="chip ${state[key]===v?'on':''}" data-v="${esc(v)}">${v==='all'?allLbl:esc(v)}</button>`).join('')+editChip(kind);};
+  row('#tsc',LISTS.todo_status,'tstat','All status','todo_status');row('#tpc',LISTS.priority,'tpri','All priority','priority');
+  const q=state.tq.trim().toLowerCase(),pi=p=>{const i=LISTS.priority.indexOf(p);return i<0?99:i;};
+  const rows=todos.filter(t=>(state.tstat==='all'||t.status===state.tstat)&&(state.tpri==='all'||t.priority===state.tpri)&&
+    (!q||[t.title,t.notes,t.equipment_name,t.equipment_unit,t.author].some(x=>x&&String(x).toLowerCase().includes(q))))
+   .sort((a,b)=>isDone(a)-isDone(b)||pi(a.priority)-pi(b.priority)||(a.due_date||'9999').localeCompare(b.due_date||'9999')||b.created_at.localeCompare(a.created_at));
+  const open=todos.filter(t=>!isDone(t)).length,od=todos.filter(t=>!isDone(t)&&t.due_date&&t.due_date<today()).length;
+  $('#list').innerHTML=`<div class="mini">${rows.length} of ${todos.length} to-dos · ${open} open${od?` · <b style="color:var(--red)">${od} overdue</b>`:''}</div>`+
+   (rows.length?rows.map(t=>`<div class="tcard ${isDone(t)?'done':''} ${prCls(t.priority)}" data-id="${t.id}">
+     <button class="tcheck" data-done="${t.id}" aria-label="${isDone(t)?'Mark not done':'Mark done'}">${isDone(t)?'✓':''}</button>
+     <div class="main"><div class="name">${esc(t.title)}</div>
+      <div class="sub"><span class="badge ${prCls(t.priority)}">${esc(t.priority||'')}</span><span class="badge b-td">${esc(t.status||'')}</span>${t.due_date?`<span class="due ${!isDone(t)&&t.due_date<today()?'late':''}">📅 ${fmtDate(t.due_date)}</span>`:''}</div>
+      ${t.equipment_id&&t.equipment_name?`<button class="eqlink" data-eq="${t.equipment_id}">🚜 ${esc(t.equipment_name)}${t.equipment_unit?' · #'+esc(t.equipment_unit):''}</button>`:''}</div>
+     <div class="chev">›</div></div>`).join(''):`<div class="empty">${todos.length?'No to-dos match.':'Nothing to do yet. Tap “＋ Add To Do”.'}</div>`);
+  $('#list').onclick=e=>{const d=e.target.closest('[data-done]');if(d)return toggleDone(todos.find(t=>t.id===+d.dataset.done));
+    const q=e.target.closest('[data-eq]');if(q){location.hash='#/eq/'+q.dataset.eq;return;}
+    const c=e.target.closest('.tcard');if(c)todoDetail(todos.find(t=>t.id===+c.dataset.id));};
+}
+async function toggleDone(t,after){try{const r=await api(`/todos/${t.id}/done`,{method:'PUT',body:{done:!isDone(t)}});t.status=r.status;t.done_at=isDone(t)?new Date().toISOString():null;
+  toast(isDone(t)?'Marked done ✓':'Reopened');await loadLists();if(after)after();else drawTodos();}catch(x){toast(x.message);}}
+function todoDetail(t){
+  const kv=(k,v)=>`<div class="kv"><b>${k}</b><span>${v||'—'}</span></div>`;
+  modal(`<h2>${esc(t.title)}</h2><div class="sub" style="margin-bottom:8px"><span class="badge ${prCls(t.priority)}">${esc(t.priority)}</span><span class="badge b-td">${esc(t.status)}</span></div>
+   ${t.notes?`<div class="item"><div class="body" style="white-space:pre-wrap">${esc(t.notes)}</div></div>`:''}
+   <div class="grid">${kv('Due',t.due_date?fmtDate(t.due_date):'')}${kv('Machine',t.equipment_name?esc(t.equipment_name):'')}${kv('Added by',esc(t.author))}${kv('Added',fmtTime(t.created_at))}${kv('Updated',fmtTime(t.updated_at))}${t.done_at?kv('Done',fmtTime(t.done_at)):''}</div>
+   <button class="btn ${isDone(t)?'':'primary'} block" id="dn" style="margin-top:12px">${isDone(t)?'↺ Reopen':'✓ Mark Done'}</button>
+   ${t.equipment_id&&t.equipment_name?`<button class="btn block" id="oe" style="margin-top:8px">🚜 Open ${esc(t.equipment_name)}</button>`:''}
+   <div class="row" style="margin-top:8px"><button class="btn" id="x">Close</button><button class="btn" id="ed">✎ Edit</button></div>`);
+  $('#x').onclick=close;$('#ed').onclick=()=>todoForm(t);
+  $('#dn').onclick=()=>toggleDone(t,()=>{drawTodos();todoDetail(t);});
+  if($('#oe'))$('#oe').onclick=()=>{close();location.hash='#/eq/'+t.equipment_id;};
+}
+async function todoForm(t){
+  const isNew=!t;t=t||{status:roleVal('todo_status','open')||LISTS.todo_status[0],priority:roleVal('priority','normal')||LISTS.priority[0]};
+  let eqs=[];try{eqs=await api('/equipment');}catch(e){}
+  modal(`<h2>${isNew?'Add To Do':'Edit To Do'}</h2>
+   <label for="t_title">What needs doing? *</label><input id="t_title" value="${esc(t.title)}" placeholder="e.g. Replace loader bucket teeth">
+   <label for="t_notes">Details</label><textarea id="t_notes" placeholder="Notes, parts needed…">${esc(t.notes)}</textarea>
+   <div class="row">${pickField('t_status','Status','todo_status',t.status)}${pickField('t_priority','Priority','priority',t.priority)}</div>
+   <label for="t_eq">Machine (optional)</label><select id="t_eq"><option value="">— none —</option>${eqs.map(e=>`<option value="${e.id}" ${+t.equipment_id===e.id?'selected':''}>${esc(e.name)}${e.unit?' · #'+esc(e.unit):''}</option>`).join('')}</select>
+   <label for="t_due">Due date (optional)</label><input id="t_due" type="date" value="${esc(t.due_date)}">
+   <div class="mini" style="margin-top:8px">${isNew?`Added by <b>${esc(store.name)}</b>`:`Added by <b>${esc(t.author||'—')}</b> · ${fmtTime(t.created_at)}`}</div>
+   <div class="row" style="margin-top:16px"><button class="btn" id="x">Cancel</button><button class="btn primary" id="s">Save</button></div>
+   ${isNew?'':'<button class="btn danger block" id="del" style="margin-top:22px">🗑 Delete To Do</button><div class="mini" style="text-align:center;margin-top:6px">Requires the admin code</div>'}`);
+  $('#x').onclick=close;
+  $('#s').onclick=async()=>{const b={title:$('#t_title').value.trim(),notes:$('#t_notes').value.trim(),status:pickVal('t_status'),priority:pickVal('t_priority'),equipment_id:$('#t_eq').value||null,due_date:$('#t_due').value||null,author:store.name};
+    if(!b.title)return toast('Title is required');
+    try{if(isNew)await api('/todos',{method:'POST',body:b});else await api('/todos/'+t.id,{method:'PUT',body:b});close();toast(isNew?'To-do added':'Saved');todoPage();}catch(x){toast(x.message);}};
+  if(!isNew)$('#del').onclick=()=>adminConfirm(`Delete “${esc(t.title)}”?`,'This permanently removes this to-do. This cannot be undone.','Delete',async a=>{await api('/todos/'+t.id,{method:'DELETE',admin:a});close();toast('Deleted');todoPage();});
 }
 async function credits(){const c=window.FF_CREDITS||await fetch('/photos/credits.json').then(r=>r.json()).catch(()=>({}));
   modal(`<h2>Photo Credits</h2><p class="mini">Photos from Wikimedia Commons, used under their licenses (unmodified except resizing/cropping).</p>${Object.entries(c).map(([k,v])=>`<div class="item"><b style="text-transform:capitalize">${esc(k.replace('-',' '))}</b><div class="mini">${esc(v.author)} · ${esc(v.license)}</div><a href="${esc(v.page)}" target="_blank" rel="noopener" style="color:var(--yellow);word-break:break-all;font-size:14px">${esc(v.page)}</a></div>`).join('')}<button class="btn block" id="x">Close</button>`);$('#x').onclick=close;}

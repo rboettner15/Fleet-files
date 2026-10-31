@@ -125,3 +125,17 @@ body.login-bg .login{padding-top:24vh}
 .card.s-custom{border-left-color:#4f8cff}.b-custom{background:#4f8cff;color:#04122e}
 .badge.b-stk{background:#2c323b;color:var(--text);border:1px solid var(--line)}
 .strow{flex-wrap:wrap}.strow .btn{flex:1 1 30%;min-height:44px}
+
+/* v10: three main tabs + To Do List */
+.seg.seg3 button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;min-height:56px;padding:4px 2px;font-size:13px;letter-spacing:.4px;line-height:1.1;white-space:nowrap}
+.seg.seg3 button i{font-style:normal;font-size:19px;line-height:1}
+.tcard{display:flex;align-items:center;gap:12px;width:100%;margin:10px 0;padding:12px;background:rgba(34,39,46,.94);border:1px solid var(--line);border-left:6px solid var(--line);border-radius:14px;color:var(--text);cursor:pointer}
+.tcard.pr-high{border-left-color:var(--red)}.tcard.pr-normal{border-left-color:var(--yellow)}.tcard.pr-low{border-left-color:#6b7480}.tcard.pr-custom{border-left-color:#4f8cff}
+.tcard .main{flex:1;min-width:0}.tcard .name{font-weight:700;font-size:17px;word-break:break-word}
+.tcard .chev{color:var(--muted);font-size:24px}
+.tcheck{flex:none;width:44px;height:44px;border-radius:50%;border:3px solid var(--yellow);background:transparent;color:#111;font:800 22px sans-serif;display:flex;align-items:center;justify-content:center}
+.tcard.done{opacity:.62}.tcard.done .name{text-decoration:line-through}.tcard.done .tcheck{background:var(--green);border-color:var(--green)}
+.badge.pr-high{background:var(--red);color:#fff}.badge.pr-normal{background:var(--yellow);color:#111}.badge.pr-low{background:#6b7480;color:#fff}.badge.pr-custom{background:#4f8cff;color:#04122e}
+.badge.b-td{background:#2c323b;color:var(--text);border:1px solid var(--line)}
+.due{font-size:14px;color:var(--muted);margin-left:4px}.due.late{color:var(--red);font-weight:700}
+.eqlink{margin-top:6px;min-height:36px;padding:4px 10px;border-radius:10px;border:1px solid var(--line);background:#16191d;color:var(--yellow);font:600 14px inherit;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
