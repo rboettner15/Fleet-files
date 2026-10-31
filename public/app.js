@@ -16,7 +16,8 @@ const state={q:'',type:'all',status:'all',tab:'notes'};
 const typeImg=t=>window.FF_PHOTOS?window.FF_PHOTOS[(TYPES.includes(t)?t:'other').replace(' ','-')]:'/photos/'+(TYPES.includes(t)?t:'other').replace(' ','-')+'.jpg';
 const fmtDate=d=>d?new Date(d.length===10?d+'T12:00:00':d).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}):'—';
 const fmtTime=d=>new Date(d).toLocaleString(undefined,{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'});
-const sc=s=>(s||'').replace(/ /g,'-');
+// status color follows the list role (so renaming keeps the color); custom statuses are blue
+const sc=s=>{const r=((LISTS.roles||{}).status||{})[s];return r==='ok'?'in-service':r==='shop'?'in-shop':r==='down'?'down':'custom';};
 function toast(m){const t=$('#toast');t.textContent=m;t.hidden=false;clearTimeout(t._t);t._t=setTimeout(()=>t.hidden=true,2200);}
 
 // ---------- DEMO MODE (all data local to this device) ----------
@@ -44,20 +45,23 @@ async function demoApi(path,opt){
   if(!d.lists){d.lists={type:TYPES.slice(),category:CATS.slice()};
     const seen=(k,v)=>{if(v&&!d.lists[k].some(o=>o.toLowerCase()===String(v).toLowerCase()))d.lists[k].push(v);};
     d.equipment.forEach(e=>seen('type',e.type));(d.loose||[]).forEach(p=>seen('category',p.category));demoSave(d);}
+  if(!d.lists.status){d.lists.status=STATUSES.slice();d.lists.stock=STOCKS.slice();d.lists.roles={status:{'in service':'ok','in shop':'shop','down':'down'},stock:{'In stock':'in','Low stock':'low','Out of stock':'out'}};
+    d.equipment.forEach(e=>{if(e.status&&!d.lists.status.some(o=>o.toLowerCase()===e.status.toLowerCase()))d.lists.status.push(e.status);});demoSave(d);}
   {const L=d.lists,has=(k,v)=>L[k].find(o=>o.toLowerCase()===String(v).trim().toLowerCase()),add=(k,v)=>{v=String(v||'').trim();if(v&&!has(k,v)){L[k].push(v);return true;}return false;};
-   const rec=k=>k==='type'?[d.equipment,'type']:[d.loose||[],'category'];
-   if((m==='POST'||m==='PUT')&&/^\/equipment(\/\d+)?$/.test(path))add('type',b.type);
-   if((m==='POST'||m==='PUT')&&/^\/loose(\/\d+)?$/.test(path))add('category',b.category);
-   if(path==='/lists')return{type:L.type.slice(),category:L.category.slice()};
-   if(x=path.match(/^\/lists\/(type|category)(\/usage|\/order)?(?:\?(.*))?$/)){const k=x[1],q=new URLSearchParams(x[3]||''),[arr,col]=rec(k);
+   const rec=k=>k==='type'||k==='status'?[d.equipment,k]:[d.loose||[],k],R=L.roles;
+   if((m==='POST'||m==='PUT')&&/^\/equipment(\/\d+)?$/.test(path)){add('type',b.type);add('status',b.status);}
+   if((m==='POST'||m==='PUT')&&/^\/loose(\/\d+)?$/.test(path)){add('category',b.category);add('stock',b.stock);}
+   if(path==='/lists')return{type:L.type.slice(),category:L.category.slice(),status:L.status.slice(),stock:L.stock.slice(),roles:JSON.parse(JSON.stringify(R))};
+   if(x=path.match(/^\/lists\/(type|category|status|stock)(\/usage|\/order)?(?:\?(.*))?$/)){const k=x[1],q=new URLSearchParams(x[3]||''),[arr,col]=rec(k);
      const uses=v=>arr.filter(r=>r[col]&&r[col].toLowerCase()===String(v).toLowerCase());
      if(x[2]==='/usage')return{count:uses(q.get('value')||'').length};
      if(x[2]==='/order'){const vs=(b.values||[]).filter(v=>L[k].includes(v));L[k]=vs.concat(L[k].filter(v=>!vs.includes(v)));demoSave(d);return{ok:true};}
      if(m==='POST'){const v=String(b.value||'').trim();if(!v)throw new Error('Enter a name');if(!add(k,v))throw new Error(`“${v}” is already in the list`);demoSave(d);return{ok:true};}
      if(m==='PUT'){const from=b.from,to=String(b.to||'').trim(),i=L[k].indexOf(from);if(i<0)throw new Error('Not found');if(!to)throw new Error('Enter a name');
-       const o=has(k,to),merged=!!(o&&o!==from);if(merged)L[k].splice(i,1);else L[k][i]=to;uses(from).forEach(r=>{r[col]=merged?o:to;r.updated_at=now;});demoSave(d);return{ok:true,merged};}
-     if(m==='DELETE'){const v=q.get('value'),rep=(q.get('replace')||'').trim()||null,i=L[k].findIndex(o=>o.toLowerCase()===String(v).toLowerCase());if(i<0)throw new Error('Not found');
-       L[k].splice(i,1);uses(v).forEach(r=>{r[col]=rep;r.updated_at=now;});if(rep)add(k,rep);demoSave(d);return{ok:true};}}}
+       const o=has(k,to),merged=!!(o&&o!==from);if(merged)L[k].splice(i,1);else L[k][i]=to;if(R[k]&&R[k][from]){if(!merged)R[k][to]=R[k][from];delete R[k][from];}uses(from).forEach(r=>{r[col]=merged?o:to;r.updated_at=now;});demoSave(d);return{ok:true,merged};}
+     if(m==='DELETE'){const v=q.get('value'),i=L[k].findIndex(o=>o.toLowerCase()===String(v).toLowerCase());let rep=(q.get('replace')||'').trim()||null;if(i<0)throw new Error('Not found');
+       if(k==='status'){if(L.status.length<2)throw new Error('Keep at least one status');if(!rep)rep=L.status.find((o,j)=>j!==i);}
+       if(R[k])delete R[k][L[k][i]];L[k].splice(i,1);uses(v).forEach(r=>{r[col]=rep;r.updated_at=now;});if(rep)add(k,rep);demoSave(d);return{ok:true};}}}
   if(x=path.match(/^\/equipment\/(\d+)\/checklists$/)){const id=+x[1];
     if(m==='GET')return d.checklists.filter(c=>c.equipment_id===id).map(c=>{const ins=d.inspections.filter(i=>i.checklist_id===c.id);return{...c,inspection_count:ins.length,last_done:ins.map(i=>i.created_at).sort().pop()||null};}).sort((p,q)=>p.is_example-q.is_example||p.name.localeCompare(q.name));
     if(!b.name)throw new Error('Checklist name is required');const c={id:nid(),equipment_id:id,name:b.name,items:b.items||[],is_example:0,created_at:now,updated_at:now};d.checklists.push(c);demoSave(d);return{id:c.id};}
@@ -157,9 +161,9 @@ async function list(){
   app.innerHTML=SEG('eq')+`<input class="search" id="q" type="search" placeholder="🔍  Search name, unit #, make, VIN…" value="${esc(state.q)}">
    <div class="chips" id="tc"></div><div class="chips" id="sc"></div><div id="list"><div class="empty">Loading…</div></div>
    <button class="btn primary fab" id="add">＋ Add Equipment</button>`;
-  const chips=(el,arr,key)=>{el.innerHTML=['all',...arr].map(v=>`<button class="chip ${state[key]===v?'on':''}" data-v="${esc(v)}">${v==='all'?(key==='type'?'All types':'All status'):esc(v)}</button>`).join('')+(key==='type'?editChip('type'):'');
-    el.onclick=e=>{if(e.target.closest('[data-edit]'))return listEditor('type',list);const b=e.target.closest('.chip');if(!b)return;state[key]=b.dataset.v;chips(el,key==='type'?LISTS.type:arr,key);draw();};};
-  await loadLists();if(!$('#tc'))return;chips($('#tc'),LISTS.type,'type');chips($('#sc'),STATUSES,'status');
+  const chips=(el,arr,key)=>{el.innerHTML=['all',...arr].map(v=>`<button class="chip ${state[key]===v?'on':''}" data-v="${esc(v)}">${v==='all'?(key==='type'?'All types':'All status'):esc(v)}</button>`).join('')+editChip(key);
+    el.onclick=e=>{if(e.target.closest('[data-edit]'))return listEditor(key,list);const b=e.target.closest('.chip');if(!b)return;state[key]=b.dataset.v;chips(el,LISTS[key],key);draw();};};
+  await loadLists();if(!$('#tc'))return;chips($('#tc'),LISTS.type,'type');if(state.status!=='all'&&!LISTS.status.includes(state.status))state.status='all';chips($('#sc'),LISTS.status,'status');
   let qt;$('#q').oninput=e=>{state.q=e.target.value;clearTimeout(qt);qt=setTimeout(draw,150);};
   $('#add').onclick=()=>editForm();
   try{cache=await api('/equipment');}catch(e){$('#list').innerHTML=`<div class="empty">${esc(e.message)}</div>`;return;}
@@ -183,13 +187,14 @@ function draw(){
 async function detail(id){
   header('Equipment',true);app.innerHTML='<div class="empty">Loading…</div>';
   let e;try{e=await api('/equipment/'+id);}catch(err){app.innerHTML=`<div class="empty">${esc(err.message)}</div>`;return;}
+  await loadLists();
   header(e.unit?'#'+e.unit:'Equipment',true);
   const kv=(k,v)=>`<div class="kv"><b>${k}</b><span>${esc(v??'—')||'—'}</span></div>`;
   app.innerHTML=`<button class="hero-wrap" id="heroBtn" aria-label="Change photo"><img class="hero" src="${e.photo||typeImg(e.type)}" alt=""><span class="hero-cta">📷 ${e.photo?'Change Photo':'Add Photo'}</span>${e.photo?'':'<span class="hero-def">Stock photo – tap to add this unit’s photo</span>'}</button>
    ${e.is_example?'<div class="item" style="border:2px solid #5b4bd6"><b>EXAMPLE item.</b> Delete it once you add your real equipment (Edit → Delete).</div>':''}
    <h2 style="margin:4px 0">${esc(e.name)}</h2>
    <div style="margin-bottom:10px"><span class="badge b-${sc(e.status)}">${esc(e.status)}</span> <span class="mini">· Last service ${fmtDate(e.last_service)}</span></div>
-   <div class="row" style="margin-bottom:10px">${STATUSES.map(s=>`<button class="btn ${e.status===s?'primary':''}" data-s="${s}" style="padding:0 6px;font-size:14px">${s}</button>`).join('')}</div>
+   <div class="row strow" style="margin-bottom:10px">${LISTS.status.map(s=>`<button class="btn ${e.status===s?'primary':''}" data-s="${esc(s)}" style="padding:0 6px;font-size:14px">${esc(s)}</button>`).join('')}</div>
    <div class="grid">${kv('Type',e.type)}${kv('Unit / ID',e.unit)}${kv('Make',e.make)}${kv('Model',e.model)}${kv('Year',e.year)}${kv(e.meter_unit==='miles'?'Mileage':'Hours',e.meter!=null?Number(e.meter).toLocaleString()+' '+(e.meter_unit||''):null)}${kv('VIN / Serial',e.vin)}${kv('Location',e.location)}</div>
    <button class="btn block" id="edit" style="margin-top:10px">✎ Edit Details</button>
    <div class="tabs">${['notes','service','parts','procedures'].map(t=>`<button class="tab ${state.tab===t?'on':''}" data-t="${t}">${t==='parts'?'Parts':t==='service'?'Service':t==='procedures'?'Procedures':'Notes'}</button>`).join('')}</div>
@@ -242,13 +247,13 @@ function serviceForm(e){
 function shrink(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>{const i=new Image();i.onload=()=>{const k=Math.min(1,1280/Math.max(i.width,i.height));const c=document.createElement('canvas');c.width=i.width*k;c.height=i.height*k;c.getContext('2d').drawImage(i,0,0,c.width,c.height);res(c.toDataURL('image/jpeg',0.72));};i.onerror=rej;i.src=r.result;};r.readAsDataURL(file);});}
 
 function editForm(e){
-  const isNew=!e;e=e||{status:'in service',type:'truck',meter_unit:'hours'};
+  const isNew=!e;e=e||{status:LISTS.status[0]||'in service',type:'truck',meter_unit:'hours'};
   const opt=(arr,v)=>arr.map(o=>`<option ${o===v?'selected':''}>${o}</option>`).join('');
   let photo=e.photo||null;
   modal(`<h2>${isNew?'Add Equipment':'Edit Equipment'}</h2>
    <label>Name *</label><input id="f_name" value="${esc(e.name)}" placeholder="e.g. Blue Service Truck">
    <div class="row"><div><label>Unit / ID #</label><input id="f_unit" value="${esc(e.unit)}"></div>${pickField('f_type','Type','type',e.type)}</div>
-   <label>Status</label><select id="f_status">${opt(STATUSES,e.status)}</select>
+   ${pickField('f_status','Status','status',e.status)}
    <div class="row"><div><label>Make</label><input id="f_make" value="${esc(e.make)}"></div><div><label>Model</label><input id="f_model" value="${esc(e.model)}"></div></div>
    <div class="row"><div><label>Year</label><input id="f_year" type="number" inputmode="numeric" value="${esc(e.year)}"></div><div><label>VIN / Serial</label><input id="f_vin" value="${esc(e.vin)}" autocapitalize="characters"></div></div>
    <div class="row"><div><label>Hours / Miles</label><input id="f_meter" type="number" inputmode="decimal" value="${esc(e.meter)}"></div><div><label>Unit</label><select id="f_meter_unit">${opt(['hours','miles'],e.meter_unit)}</select></div></div>
@@ -261,7 +266,7 @@ function editForm(e){
   $('#f_photo').onchange=async ev=>{const f=ev.target.files[0];if(!f)return;try{photo=await shrink(f);$('#pv').src=photo;$('#pv').style.display='';$('#rmp').hidden=false;}catch{toast('Could not read photo');}};
   $('#rmp').onclick=()=>{photo=null;$('#pv').style.display='none';$('#rmp').hidden=true;};
   $('#x').onclick=close;
-  $('#s').onclick=async()=>{const b={};['name','unit','status','make','model','year','vin','meter','meter_unit','location'].forEach(k=>b[k]=$('#f_'+k).value.trim());b.type=pickVal('f_type');b.photo=photo;
+  $('#s').onclick=async()=>{const b={};['name','unit','make','model','year','vin','meter','meter_unit','location'].forEach(k=>b[k]=$('#f_'+k).value.trim());b.type=pickVal('f_type');b.status=pickVal('f_status')||LISTS.status[0];b.photo=photo;
     if(!b.name)return toast('Name is required');
     try{if(isNew){const r=await api('/equipment',{method:'POST',body:b});close();toast('Equipment added');location.hash='#/eq/'+r.id;}
       else{await api('/equipment/'+e.id,{method:'PUT',body:b});close();toast('Saved');detail(e.id);}}catch(x){toast(x.message);}};
@@ -497,7 +502,7 @@ async function partsPage(){
    <button class="btn primary fab" id="add">＋ Add Part</button>`;
   $('#add').onclick=()=>looseForm();
   let qt;$('#lq').oninput=e=>{state.lq=e.target.value;clearTimeout(qt);qt=setTimeout(drawLoose,150);};
-  $('#ls').onclick=e=>{const b=e.target.closest('.chip');if(!b)return;state.lstock=b.dataset.v;drawLoose();};
+  $('#ls').onclick=e=>{if(e.target.closest('[data-edit]'))return listEditor('stock',partsPage);const b=e.target.closest('.chip');if(!b)return;state.lstock=b.dataset.v;drawLoose();};
   $('#lc').onclick=e=>{if(e.target.closest('[data-edit]'))return listEditor('category',partsPage);const b=e.target.closest('.chip');if(!b)return;state.lcat=b.dataset.v;drawLoose();};
   api('/parts').then(p=>{machParts=p;if(state.lq)drawLoose();}).catch(()=>{});
   await loadLists();
@@ -510,14 +515,16 @@ function drawLoose(){
   const q=state.lq.toLowerCase();
   const cats=LISTS.category.slice();loose.forEach(p=>{if(p.category&&!cats.includes(p.category))cats.push(p.category);});
   $('#lc').innerHTML=['all',...cats].map(v=>`<button class="chip ${state.lcat===v?'on':''}" data-v="${esc(v)}">${v==='all'?'All categories':esc(v)}</button>`).join('')+editChip('category');
-  $('#ls').innerHTML=[['all','All stock'],['in','In stock'],['low','Low stock']].map(([v,l])=>`<button class="chip ${state.lstock===v?'on':''}" data-v="${v}">${l}</button>`).join('');
-  const rows=loose.filter(p=>(state.lcat==='all'||p.category===state.lcat)&&(state.lstock==='all'||(state.lstock==='low'?isLow(p):!isLow(p)&&Number(p.qty)>0))&&(!q||partHit(p,q)));
+  if(state.lstock!=='all'&&!LISTS.stock.includes(state.lstock))state.lstock='all';
+  const stk=LISTS.stock.slice();loose.forEach(p=>{if(p.stock&&!stk.includes(p.stock))stk.push(p.stock);});
+  $('#ls').innerHTML=['all',...stk].map(v=>`<button class="chip ${state.lstock===v?'on':''}" data-v="${esc(v)}">${v==='all'?'All stock':esc(v)}</button>`).join('')+editChip('stock');
+  const rows=loose.filter(p=>(state.lcat==='all'||p.category===state.lcat)&&(state.lstock==='all'||effStock(p)===state.lstock)&&(!q||partHit(p,q)));
   const thumb=p=>p.photo_src?`<img src="${p.photo_src}" alt="">`:p.has_photo?`<img loading="lazy" src="/api/loose/${p.id}/photo?code=${encodeURIComponent(store.code||'')}&v=${encodeURIComponent(p.updated_at)}" alt="">`:'🔩';
   let h=(q?`<div class="sec-h">🧰 Shop Parts (${rows.length})</div>`:`<div class="mini">${rows.length} of ${loose.length} shop parts${loose.filter(isLow).length?` · <b style="color:var(--orange)">${loose.filter(isLow).length} low</b>`:''}</div>`)+
    (rows.length?rows.map(p=>`<button class="pcard lp ${isLow(p)?'low':''}" data-id="${p.id}"><div class="thumb">${thumb(p)}</div>
     <div class="main"><div class="name">${esc(p.name)}</div>
      <div class="sub">${esc([p.part_number&&('#'+p.part_number),p.manufacturer].filter(Boolean).join(' · '))}</div>
-     <div class="sub">${p.category?`<span class="badge b-cat">${esc(p.category)}</span>`:''}${p.is_example?'<span class="badge b-ex">Example</span>':''}${p.bin?' 📍 '+esc(p.bin):''}</div></div>
+     <div class="sub">${p.category?`<span class="badge b-cat">${esc(p.category)}</span>`:''}${p.stock?`<span class="badge b-stk">${esc(p.stock)}</span>`:''}${p.is_example?'<span class="badge b-ex">Example</span>':''}${p.bin?' 📍 '+esc(p.bin):''}</div></div>
     <div class="qty"><b>${p.qty??'–'}</b><span>on hand</span>${isLow(p)?'<em>LOW</em>':''}</div></button>`).join('')
    :`<div class="empty">${loose.length?'No shop parts match.':'No shop parts yet. Tap “Add Part”.'}</div>`);
   if(q){const mp=machParts.filter(p=>partHit(p,q)).slice(0,50);
@@ -537,7 +544,7 @@ async function looseView(id){
    <h2>${esc(p.name)}</h2>${p.is_example?'<div class="mini">EXAMPLE part – delete it when you add real parts.</div>':''}
    <div id="lowb">${isLow(p)?'<div class="lowbar">⚠ Low stock – at or below reorder level</div>':''}</div>
    <div class="qtybox"><button class="btn qbtn" id="qm" aria-label="One less">−</button><div><b id="qv">${p.qty??0}</b><span>on hand</span></div><button class="btn qbtn" id="qp" aria-label="One more">＋</button></div>
-   <div class="grid" style="margin-top:8px">${kv('Part #',esc(p.part_number))}${kv('Brand',esc(p.manufacturer))}${kv('Category',esc(p.category))}${kv('Reorder at',esc(p.reorder_level))}${kv('Location / bin',esc(p.bin))}${kv('Supplier',esc(p.supplier))}</div>
+   <div class="grid" style="margin-top:8px">${kv('Part #',esc(p.part_number))}${kv('Brand',esc(p.manufacturer))}${kv('Category',esc(p.category))}${kv('Stock',esc(effStock(p))+(p.stock?'':' (auto)'))}${kv('Reorder at',esc(p.reorder_level))}${kv('Location / bin',esc(p.bin))}${kv('Supplier',esc(p.supplier))}</div>
    ${p.fits?`<div class="item"><div class="mini">Fits</div><div class="body">${esc(p.fits)}</div></div>`:''}
    ${p.notes?`<div class="item"><div class="body">${esc(p.notes)}</div></div>`:''}
    <div class="row" style="margin-top:12px"><button class="btn" id="x">Close</button><button class="btn primary" id="ed">✎ Edit</button></div>`);
@@ -552,7 +559,7 @@ function looseForm(p){
   modal(`<h2>${isNew?'Add Shop Part':'Edit Shop Part'}</h2>
    ${f('name','Part name *','text','placeholder="e.g. V-belt A42"')}
    <div class="row">${f('part_number','Part #')}${f('manufacturer','Brand')}</div>
-   ${pickField('l_category','Category','category',p.category)}
+   <div class="row">${pickField('l_category','Category','category',p.category)}${pickField('l_stock','Stock status','stock',p.stock)}</div>
    <div class="row">${f('qty','Qty on hand','number','inputmode="decimal"')}${f('reorder_level','Low at','number','inputmode="decimal"')}</div>
    ${f('bin','Location / bin')}
    ${f('fits','Fits which machines (optional)','text','placeholder="e.g. Loader, excavator"')}
@@ -565,20 +572,26 @@ function looseForm(p){
   $('#l_photo').onchange=async ev=>{const fl=ev.target.files[0];if(!fl)return;try{photo=await shrink(fl);$('#lpv').src=photo;$('#lpv').style.display='';$('#lrm').hidden=false;}catch{toast('Could not read photo');}};
   $('#lrm').onclick=()=>{photo=null;$('#lpv').style.display='none';$('#lrm').hidden=true;};
   $('#x').onclick=isNew?close:()=>looseView(p.id);
-  $('#s').onclick=async()=>{const b={photo};b.category=pickVal('l_category');['name','part_number','manufacturer','qty','reorder_level','bin','fits','supplier','notes'].forEach(k=>b[k]=$('#l_'+k).value.trim());
+  $('#s').onclick=async()=>{const b={photo};b.category=pickVal('l_category');b.stock=pickVal('l_stock');['name','part_number','manufacturer','qty','reorder_level','bin','fits','supplier','notes'].forEach(k=>b[k]=$('#l_'+k).value.trim());
     if(!b.name)return toast('Part name is required');
     try{if(isNew)await api('/loose',{method:'POST',body:b});else await api('/loose/'+p.id,{method:'PUT',body:b});close();toast(isNew?'Part added':'Part saved');partsPage();}catch(x){toast(x.message);}};
   if(!isNew)$('#del').onclick=()=>adminConfirm(`Delete “${esc(p.name)}”?`,'This permanently removes this shop part. This cannot be undone.','Delete Part',async a=>{await api('/loose/'+p.id,{method:'DELETE',admin:a});close();toast('Part deleted');partsPage();});
 }
 // ---------- Editable lists (equipment types, shop-part categories) ----------
-const LISTS={type:TYPES.slice(),category:CATS.slice()};
-const LNAME={type:['type','types','machine','machines'],category:['category','categories','shop part','shop parts']};
-async function loadLists(){try{const l=await api('/lists');if(l&&l.type)Object.assign(LISTS,l);}catch(e){}}
+const STOCKS=['In stock','Low stock','Out of stock'];
+const LISTS={type:TYPES.slice(),category:CATS.slice(),status:STATUSES.slice(),stock:STOCKS.slice(),
+  roles:{status:{'in service':'ok','in shop':'shop','down':'down'},stock:{'In stock':'in','Low stock':'low','Out of stock':'out'}}};
+// a shop part's stock label: the one picked on the part, or automatic from qty (In / Low / Out roles)
+const roleVal=(k,r)=>Object.entries((LISTS.roles||{})[k]||{}).find(([v,x])=>x===r&&LISTS[k].includes(v))?.[0]||'';
+const autoStock=p=>p.qty==null||p.qty===''?'':Number(p.qty)<=0?roleVal('stock','out'):isLow(p)?roleVal('stock','low'):roleVal('stock','in');
+const effStock=p=>p.stock||autoStock(p);
+const LNAME={type:['type','types','machine','machines'],category:['category','categories','shop part','shop parts'],status:['status','statuses','machine','machines'],stock:['stock status','stock statuses','shop part','shop parts']};
+async function loadLists(){try{const l=await api('/lists');if(l&&l.type){Object.assign(LISTS,l);LISTS.roles=l.roles||{};}}catch(e){}}
 const editChip=kind=>`<button class="chip chip-edit" data-edit="${kind}" aria-label="Edit ${LNAME[kind][1]}">✎ Edit</button>`;
 // <select> of the list + "New…" which reveals a text box
 function pickField(id,label,kind,val){const vs=LISTS[kind].slice();if(val&&!vs.some(v=>v.toLowerCase()===String(val).toLowerCase()))vs.push(val);
   return `<div><label for="${id}">${label}</label><select id="${id}" onchange="document.getElementById('${id}_new').hidden=this.value!=='__new'">
-   ${kind==='category'?`<option value="" ${!val?'selected':''}>— none —</option>`:''}${vs.map(v=>`<option value="${esc(v)}" ${v===val?'selected':''}>${esc(v)}</option>`).join('')}<option value="__new">＋ New ${LNAME[kind][0]}…</option></select>
+   ${kind==='category'||kind==='stock'?`<option value="" ${!val?'selected':''}>${kind==='stock'?'Automatic (from qty)':'— none —'}</option>`:''}${vs.map(v=>`<option value="${esc(v)}" ${v===val?'selected':''}>${esc(v)}</option>`).join('')}<option value="__new">＋ New ${LNAME[kind][0]}…</option></select>
    <input id="${id}_new" hidden placeholder="Type a new ${LNAME[kind][0]}" style="margin-top:6px"></div>`;}
 const pickVal=id=>{const s=$('#'+id);return s.value==='__new'?$('#'+id+'_new').value.trim():s.value;};
 async function listEditor(kind,after){
@@ -588,7 +601,7 @@ async function listEditor(kind,after){
      <div id="lerows">${vs.map((v,i)=>`<div class="lerow"><input class="lein" data-i="${i}" value="${esc(v)}" aria-label="${esc(v)}">
       <button class="btn lebtn" data-up="${i}" ${i?'':'disabled'} aria-label="Move up">↑</button><button class="btn lebtn" data-dn="${i}" ${i<vs.length-1?'':'disabled'} aria-label="Move down">↓</button>
       <button class="btn lebtn danger" data-del="${i}" aria-label="Delete ${esc(v)}">🗑</button></div>`).join('')||'<div class="empty">No '+many+' yet.</div>'}</div>
-     <label for="lenew">Add a new ${one}</label><div class="row"><input id="lenew" placeholder="e.g. ${kind==='type'?'skid steer':'Lights'}" style="flex:2"><button class="btn primary" id="leadd">＋ Add</button></div>
+     <label for="lenew">Add a new ${one}</label><div class="row"><input id="lenew" placeholder="e.g. ${({type:'skid steer',category:'Lights',status:'waiting on parts',stock:'On order'})[kind]}" style="flex:2"><button class="btn primary" id="leadd">＋ Add</button></div>
      <button class="btn block" id="x" style="margin-top:16px">Done</button>`);
     $('#x').onclick=()=>{close();after();};
     $('#leadd').onclick=async()=>{const v=$('#lenew').value.trim();if(!v)return toast('Type a name first');
@@ -600,10 +613,14 @@ async function listEditor(kind,after){
     $('#modal').querySelectorAll('[data-dn]').forEach(b=>b.onclick=()=>move(+b.dataset.dn,+b.dataset.dn+1));
     $('#modal').querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{const v=vs[+b.dataset.del];
       let n=0;try{n=(await api(`/lists/${kind}/usage?value=`+encodeURIComponent(v))).count;}catch(x){}
-      const repl=kind==='type'?(LISTS.type.find(t=>t.toLowerCase()==='other'&&t.toLowerCase()!==v.toLowerCase())||''):'';
-      const msg=n?`<b>${n} ${n===1?thing:things}</b> use “${esc(v)}”. They’ll be set to ${repl?`“${esc(repl)}”`:'blank (no '+one+')'}.`:`No ${things} use “${esc(v)}”.`;
+      if(kind==='status'&&LISTS.status.length<2)return toast('Keep at least one status');
+      const rest=LISTS[kind].filter(t=>t.toLowerCase()!==v.toLowerCase());
+      const repl=kind==='type'?(rest.find(t=>t.toLowerCase()==='other')||''):kind==='status'?(rest.find(t=>LISTS.roles.status?.[t]==='ok')||rest[0]):'';
+      const to=kind==='stock'?'Automatic (from qty)':repl?`“${esc(repl)}”`:'blank (no '+one+')';
+      const auto=kind==='stock'&&LISTS.roles.stock?.[v]?` Parts on Automatic won’t get the “${esc(v)}” label any more (the orange LOW warning still shows).`:'';
+      const msg=(n?`<b>${n} ${n===1?thing:things}</b> use “${esc(v)}”. They’ll be set to ${to}.`:`No ${things} use “${esc(v)}”.`)+auto;
       adminConfirm(`Delete “${esc(v)}”?`,msg,'Delete',async a=>{await api(`/lists/${kind}?value=${encodeURIComponent(v)}&replace=${encodeURIComponent(repl)}`,{method:'DELETE',admin:a});
-        if(kind==='type'&&state.type===v)state.type='all';if(kind==='category'&&state.lcat===v)state.lcat='all';await loadLists();toast('Deleted');draw();});});
+        if(kind==='type'&&state.type===v)state.type='all';if(kind==='category'&&state.lcat===v)state.lcat='all';if(kind==='status'&&state.status===v)state.status='all';if(kind==='stock'&&state.lstock===v)state.lstock='all';await loadLists();toast('Deleted');draw();});});
   };draw();
 }
 async function credits(){const c=window.FF_CREDITS||await fetch('/photos/credits.json').then(r=>r.json()).catch(()=>({}));

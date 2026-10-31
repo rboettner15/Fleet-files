@@ -121,3 +121,7 @@ body.login-bg .login{padding-top:24vh}
 .lerow .lein{flex:1;min-width:0;font-size:16px;margin:0}
 .lerow .lebtn{min-width:44px;min-height:44px;padding:0 10px;margin:0;flex:none}
 .lerow .lebtn:disabled{opacity:.3}
+/* v9: custom statuses + manual stock labels */
+.card.s-custom{border-left-color:#4f8cff}.b-custom{background:#4f8cff;color:#04122e}
+.badge.b-stk{background:#2c323b;color:var(--text);border:1px solid var(--line)}
+.strow{flex-wrap:wrap}.strow .btn{flex:1 1 30%;min-height:44px}

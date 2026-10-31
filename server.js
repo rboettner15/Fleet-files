@@ -89,17 +89,31 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
   // ---- Editable lists (v8): equipment types + shop-part categories. Additive only. ----
   db.exec(`CREATE TABLE IF NOT EXISTS lists(id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, value TEXT NOT NULL, pos INTEGER DEFAULT 0, created_at TEXT);`);
   const LISTS = { type: { table: 'equipment', col: 'type', seed: ['truck', 'dump truck', 'trailer', 'loader', 'excavator', 'dozer', 'generator', 'other'] },
-    category: { table: 'loose_parts', col: 'category', seed: ['Filters', 'Belts', 'Hydraulic', 'Electrical', 'Hardware', 'Fluids', 'Tires', 'Engine', 'Other'] } };
+    category: { table: 'loose_parts', col: 'category', seed: ['Filters', 'Belts', 'Hydraulic', 'Electrical', 'Hardware', 'Fluids', 'Tires', 'Engine', 'Other'] },
+    // v9: status + stock. `role` keeps a built-in meaning (status color / automatic stock label) through renames.
+    status: { table: 'equipment', col: 'status', required: true, seed: ['in service', 'in shop', 'down'], roles: { 'in service': 'ok', 'in shop': 'shop', 'down': 'down' } },
+    stock: { table: 'loose_parts', col: 'stock', seed: ['In stock', 'Low stock', 'Out of stock'], roles: { 'In stock': 'in', 'Low stock': 'low', 'Out of stock': 'out' } } };
+  // additive columns (ADD COLUMN only, never drops): lists.role, loose_parts.stock (blank = automatic from qty)
+  const hasCol = (t, c) => all(`PRAGMA table_info(${t})`).some(r => r.name === c);
+  if (!hasCol('lists', 'role')) db.exec('ALTER TABLE lists ADD COLUMN role TEXT');
+  if (!hasCol('loose_parts', 'stock')) db.exec('ALTER TABLE loose_parts ADD COLUMN stock TEXT');
   const listVals = k => all('SELECT value FROM lists WHERE kind=? ORDER BY pos, id', [k]).map(r => r.value);
   const findVal = (k, v) => get('SELECT * FROM lists WHERE kind=? AND value=? COLLATE NOCASE', [k, v]);
   const addVal = (k, v) => { v = String(v || '').trim(); if (!v || findVal(k, v)) return false;
     db.run('INSERT INTO lists(kind,value,pos,created_at) VALUES(?,?,?,?)', [k, v, (get('SELECT MAX(pos) m FROM lists WHERE kind=?', [k]).m ?? -1) + 1, now()]); return true; };
   if (!fs.existsSync(DB_FILE + '.lists-seeded')) {
-    for (const [k, L] of Object.entries(LISTS)) {
+    for (const k of ['type', 'category']) { const L = LISTS[k];
       for (const v of L.seed) addVal(k, v);
       for (const r of all(`SELECT DISTINCT ${L.col} v FROM ${L.table} WHERE ${L.col} IS NOT NULL AND TRIM(${L.col})<>''`)) addVal(k, r.v);
     }
     save(); fs.writeFileSync(DB_FILE + '.lists-seeded', now());
+  }
+  if (!fs.existsSync(DB_FILE + '.lists2-seeded')) { // v9: seed status + stock once, leaves type/category untouched
+    for (const k of ['status', 'stock']) { const L = LISTS[k];
+      for (const v of L.seed) { addVal(k, v); db.run('UPDATE lists SET role=? WHERE kind=? AND value=? AND role IS NULL', [L.roles[v], k, v]); }
+      for (const r of all(`SELECT DISTINCT ${L.col} v FROM ${L.table} WHERE ${L.col} IS NOT NULL AND TRIM(${L.col})<>''`)) addVal(k, r.v);
+    }
+    save(); fs.writeFileSync(DB_FILE + '.lists2-seeded', now());
   }
 
   const app = express();
@@ -130,13 +144,13 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
   });
   api.post('/equipment', (req, res) => {
     if (!req.body.name) return res.status(400).json({ error: 'Name is required' });
-    addVal('type', req.body.type);
+    addVal('type', req.body.type); addVal('status', req.body.status);
     const id = run(`INSERT INTO equipment(${F},created_at,updated_at) VALUES(${F.map(() => '?')},?,?)`, [...vals(req.body), now(), now()]);
     res.status(201).json({ id });
   });
   api.put('/equipment/:id', (req, res) => {
     if (!req.body.name) return res.status(400).json({ error: 'Name is required' });
-    addVal('type', req.body.type);
+    addVal('type', req.body.type); addVal('status', req.body.status);
     run(`UPDATE equipment SET ${F.map(f => f + '=?')},updated_at=? WHERE id=?`, [...vals(req.body), now(), +req.params.id]);
     res.json({ ok: true });
   });
@@ -192,7 +206,9 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
   api.delete('/parts/:id', (req, res) => { run('DELETE FROM parts_v2 WHERE id=?', [+req.params.id]); res.json({ ok: true }); });
   // ---- Editable lists ----
   const kindOk = (req, res, next) => LISTS[req.params.kind] ? next() : res.status(404).json({ error: 'Unknown list' });
-  api.get('/lists', (req, res) => res.json({ type: listVals('type'), category: listVals('category') }));
+  api.get('/lists', (req, res) => { const roles = {};
+    for (const r of all("SELECT kind,value,role FROM lists WHERE role IS NOT NULL")) (roles[r.kind] = roles[r.kind] || {})[r.value] = r.role;
+    res.json({ type: listVals('type'), category: listVals('category'), status: listVals('status'), stock: listVals('stock'), roles }); });
   api.get('/lists/:kind/usage', kindOk, (req, res) => { const L = LISTS[req.params.kind];
     res.json({ count: get(`SELECT COUNT(*) c FROM ${L.table} WHERE ${L.col}=? COLLATE NOCASE`, [String(req.query.value || '')]).c }); });
   api.post('/lists/:kind', kindOk, (req, res) => { const v = String(req.body.value || '').trim(); if (!v) return res.status(400).json({ error: 'Enter a name' });
@@ -206,15 +222,18 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
     save(); res.json({ ok: true, merged: !!(other && other.id !== row.id) }); });
   api.put('/lists/:kind/order', kindOk, (req, res) => { (Array.isArray(req.body.values) ? req.body.values : []).forEach((v, i) => db.run('UPDATE lists SET pos=? WHERE kind=? AND value=?', [i, req.params.kind, v])); save(); res.json({ ok: true }); });
   api.delete('/lists/:kind', kindOk, admin, (req, res) => { // records using it are moved to `replace` (or blank)
-    const k = req.params.kind, L = LISTS[k], v = String(req.query.value || ''), rep = String(req.query.replace || '').trim() || null;
+    const k = req.params.kind, L = LISTS[k], v = String(req.query.value || '');
     if (!findVal(k, v)) return res.status(404).json({ error: 'Not found' });
+    let rep = String(req.query.replace || '').trim() || null;
+    if (L.required) { const rest = listVals(k).filter(x => x.toLowerCase() !== v.toLowerCase());
+      if (!rest.length) return res.status(400).json({ error: 'Keep at least one status' }); if (!rep) rep = rest[0]; }
     if (rep && rep.toLowerCase() === v.toLowerCase()) return res.status(400).json({ error: 'Pick a different replacement' });
     db.run('DELETE FROM lists WHERE kind=? AND value=? COLLATE NOCASE', [k, v]);
     db.run(`UPDATE ${L.table} SET ${L.col}=?, updated_at=? WHERE ${L.col}=? COLLATE NOCASE`, [rep, now(), v]);
     if (rep) addVal(k, rep); save(); res.json({ ok: true }); });
 
   // ---- Loose shop parts ----
-  const LF = ['name', 'part_number', 'manufacturer', 'category', 'qty', 'reorder_level', 'bin', 'fits', 'supplier', 'notes', 'photo'];
+  const LF = ['name', 'part_number', 'manufacturer', 'category', 'stock', 'qty', 'reorder_level', 'bin', 'fits', 'supplier', 'notes', 'photo'];
   const lvals = b => LF.map(f => b[f] === '' || b[f] === undefined ? null : b[f]);
   api.get('/loose', (req, res) => res.json(all(`SELECT id,${LF.filter(f => f !== 'photo')},is_example,updated_at,(photo IS NOT NULL AND photo<>'') has_photo FROM loose_parts ORDER BY is_example, name COLLATE NOCASE`)));
   api.get('/loose/:id', (req, res) => { const p = get('SELECT * FROM loose_parts WHERE id=?', [+req.params.id]); p ? res.json(p) : res.status(404).json({ error: 'Not found' }); });
@@ -226,12 +245,12 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
   });
   api.post('/loose', (req, res) => {
     if (!req.body.name) return res.status(400).json({ error: 'Part name is required' });
-    addVal('category', req.body.category);
+    addVal('category', req.body.category); addVal('stock', req.body.stock);
     res.status(201).json({ id: run(`INSERT INTO loose_parts(${LF},created_at,updated_at) VALUES(${LF.map(() => '?')},?,?)`, [...lvals(req.body), now(), now()]) });
   });
   api.put('/loose/:id', (req, res) => {
     if (!req.body.name) return res.status(400).json({ error: 'Part name is required' });
-    addVal('category', req.body.category);
+    addVal('category', req.body.category); addVal('stock', req.body.stock);
     run(`UPDATE loose_parts SET ${LF.map(f => f + '=?')},updated_at=? WHERE id=?`, [...lvals(req.body), now(), +req.params.id]); res.json({ ok: true });
   });
   api.post('/loose/:id/qty', (req, res) => {

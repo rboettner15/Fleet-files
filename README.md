@@ -44,7 +44,10 @@ The main screen has an **Equipment | Parts** switch under the header. The **Part
 - Deleting needs the admin code. The sheet first says how many records use it; machines move to “other”, shop parts become blank (no category). Nothing else is deleted.
 - Add/Edit forms pick from these lists; “＋ New type…/New category…” lets you type a new one, which is added to the list automatically.
 - Stored in a new `lists` table (additive). Seeded once (`fleet.db.lists-seeded`) from the built-in defaults plus any types/categories already used.
-- **Status** (in service / in shop / down) stays fixed on purpose: it drives the colors, badges and status buttons.
+- **Status & stock (v9)** are editable the same way (✎ Edit at the end of the Status row on the Equipment page and the Stock row on the Parts page; the “All” chip is fixed).
+  - Status: the add/edit form and the status buttons on a machine use the list. Built-in statuses keep their colors when renamed (green / orange / red); new ones are blue. Deleting a status in use moves those machines to “in service” (or the first status left); at least one status must remain.
+  - Stock: defaults In stock / Low stock / Out of stock are **automatic** from qty and “Low at” (renaming keeps them automatic). A part can also be set to a stock status by hand in its form (e.g. “On order”); “Automatic (from qty)” is the default. Deleting a stock status in use puts those parts back to Automatic. Note: qty 0 now shows under “Out of stock” (before v9 it was under “Low stock”); the orange LOW warning is unchanged.
+  - Additive migration: `lists.role` and `loose_parts.stock` columns (ADD COLUMN only), seeded once via `fleet.db.lists2-seeded`. `kind` in the API can also be `status` or `stock`.
 - API: `GET /api/lists`, `POST /api/lists/:kind {value}`, `PUT /api/lists/:kind {from,to}`, `PUT /api/lists/:kind/order {values}`, `GET /api/lists/:kind/usage?value=`, `DELETE /api/lists/:kind?value=&replace=` (admin). `kind` = `type` or `category`.
 - Custom types use the generic “other” stock photo until a unit photo is added.
 
