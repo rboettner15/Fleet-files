@@ -6,7 +6,8 @@ b64 = lambda f, mt: f"data:{mt};base64," + base64.b64encode(open(os.path.join(P,
 css = open(f'{P}/style.css').read()
 for w in ('600', '700'):
     css = css.replace(f'url(/fonts/oxanium-latin-{w}-normal.woff2)', 'url(' + b64(f'fonts/oxanium-latin-{w}-normal.woff2', 'font/woff2') + ')')
-css = css.replace('url(/photos/hero.jpg)', 'url(' + b64('photos/hero.jpg', 'image/jpeg') + ')')
+for f in ('pit-mobile', 'pit-desktop'):
+    css = css.replace(f'url(/photos/{f}.webp)', 'url(' + b64(f'photos/{f}.webp', 'image/webp') + ')')
 assert '/fonts/' not in css and '/photos/' not in css
 photos = {k: b64(f'photos/{k}.jpg', 'image/jpeg') for k in ['truck','dump-truck','trailer','loader','excavator','dozer','generator','other']}
 html = open(f'{P}/index.html').read()

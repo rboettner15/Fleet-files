@@ -49,6 +49,7 @@ Both give a permanent HTTPS URL, so the home-screen app keeps working.
 ## CREDITS (photos)
 All photos are from Wikimedia Commons, resized/cropped only, stored in `public/photos/`. Also shown in the app under Settings → Photo Credits.
 
+- **background (pit)**: U.S. Department of Agriculture, photo by Lance Cheung, Public domain (US federal government work). Electric shovel loading a Cat haul truck in an open-pit coal mine near Wright, Wyoming — https://commons.wikimedia.org/wiki/File:20190802-OSEC-LSC-0598_(48443511726).jpg (cropped/resized to `public/photos/pit-mobile.webp` and `pit-desktop.webp`; used as the fixed full-screen app background)
 - **hero**: Tiia Monto, CC BY-SA 3.0 — https://commons.wikimedia.org/wiki/File:Excavator_and_mountains.jpg
 - **excavator**: Isaac Wedin, CC BY 2.0 — https://commons.wikimedia.org/wiki/File:Excavating_in_Soldotna.jpg
 - **loader**: Syced, CC0 — https://commons.wikimedia.org/wiki/File:Komatsu_WA500_wheel_loader_for_gravel_mining.jpg

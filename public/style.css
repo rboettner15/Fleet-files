@@ -29,7 +29,7 @@ label{display:block;font-weight:700;font-size:14px;text-transform:uppercase;lett
 .b-ex{background:#5b4bd6;color:#fff;margin-left:6px}
 .fab{position:fixed;right:calc(16px + var(--sr));bottom:calc(16px + var(--sb));min-height:60px;padding:0 24px;border-radius:30px;box-shadow:0 6px 20px #0008;z-index:6}
 .hero{width:100%;max-height:260px;object-fit:cover;border-radius:12px;margin-bottom:10px}
-.tabs{display:flex;gap:6px;margin:14px 0;position:sticky;top:calc(76px + var(--st));z-index:4;background:var(--bg);padding:4px 0}
+.tabs{display:flex;gap:6px;margin:14px 0;position:sticky;top:calc(76px + var(--st));z-index:4;background:rgba(12,17,24,.94);padding:4px 0}
 .tab{flex:1;min-height:50px;border:0;border-radius:10px;background:var(--panel);color:var(--muted);font-size:15px;font-weight:800;text-transform:uppercase}
 .tab.on{background:var(--yellow);color:#111}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
@@ -51,12 +51,12 @@ label{display:block;font-weight:700;font-size:14px;text-transform:uppercase;lett
 @font-face{font-family:"Oxanium";src:url(/fonts/oxanium-latin-600-normal.woff2) format("woff2");font-weight:600;font-display:swap}
 @font-face{font-family:"Oxanium";src:url(/fonts/oxanium-latin-700-normal.woff2) format("woff2");font-weight:700;font-display:swap}
 html{background:#0d1117}
-body{min-height:100vh;background:
- linear-gradient(rgba(120,170,230,.06) 1px,transparent 1px) 0 0/28px 28px,
- linear-gradient(90deg,rgba(120,170,230,.06) 1px,transparent 1px) 0 0/28px 28px,
- linear-gradient(rgba(120,170,230,.035) 1px,transparent 1px) 0 0/7px 7px,
- radial-gradient(1200px 600px at 80% -10%,#1d3550 0%,transparent 60%),
- linear-gradient(180deg,#121a24 0%,#0d1117 70%);background-attachment:fixed}
+html body{min-height:100vh;background:transparent}
+/* Pit photo background: fixed pseudo-element (background-attachment:fixed is broken on iOS Safari) */
+body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+ background:linear-gradient(180deg,rgba(9,14,22,.66) 0%,rgba(12,20,32,.78) 35%,rgba(10,15,22,.92) 100%),
+ url(/photos/pit-mobile.webp) center 30%/cover no-repeat,#0d1117}
+@media (min-width:900px) and (orientation:landscape){body::before{background:linear-gradient(180deg,rgba(9,14,22,.66) 0%,rgba(12,20,32,.8) 40%,rgba(10,15,22,.92) 100%),url(/photos/pit-desktop.webp) center 40%/cover no-repeat,#0d1117}}
 header{background:rgba(10,14,19,.88);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:3px solid var(--yellow)}
 header h1,h2,.tab,.btn,.chip,.badge{font-family:"Oxanium",-apple-system,sans-serif}
 header h1{font-weight:700;letter-spacing:1px}
@@ -80,7 +80,8 @@ header h1{font-weight:700;letter-spacing:1px}
 .qty{flex:none;text-align:center;min-width:58px}.qty b{display:block;font-family:"Oxanium",sans-serif;font-size:26px;line-height:1}.qty span{font-size:11px;color:var(--muted);text-transform:uppercase}
 .qty em{display:block;font-style:normal;background:#ff5d2a;color:#fff;font-weight:800;font-size:12px;border-radius:6px;margin-top:4px;padding:2px 0}
 .login img.login-hero{width:100%;border-radius:14px}
-body.login-bg{background:linear-gradient(180deg,rgba(8,12,18,.55) 0%,rgba(8,12,18,.82) 45%,rgba(8,12,18,.95) 100%),url(/photos/hero.jpg) center top/cover no-repeat fixed,#0d1117}
+body.login-bg::before{background:linear-gradient(180deg,rgba(8,12,18,.45) 0%,rgba(8,12,18,.78) 45%,rgba(8,12,18,.95) 100%),url(/photos/pit-mobile.webp) center 30%/cover no-repeat,#0d1117}
+@media (min-width:900px) and (orientation:landscape){body.login-bg::before{background:linear-gradient(180deg,rgba(8,12,18,.45) 0%,rgba(8,12,18,.78) 45%,rgba(8,12,18,.95) 100%),url(/photos/pit-desktop.webp) center 40%/cover no-repeat,#0d1117}}
 body.login-bg .login{padding-top:24vh}
 .login input{background:rgba(10,14,19,.85)}
 #demobar{position:sticky;top:calc(71px + var(--st));z-index:5;display:flex;align-items:center;gap:8px;background:repeating-linear-gradient(-45deg,#f5b301 0 14px,#e0a200 14px 28px);color:#111;font-family:"Oxanium",sans-serif;font-weight:700;font-size:14px;padding:6px calc(10px + var(--sr)) 6px calc(10px + var(--sl))}
