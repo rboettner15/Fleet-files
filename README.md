@@ -31,7 +31,7 @@ Open http://localhost:8080. Data lives in `data/fleet.db` (SQLite via sql.js). B
 - **Owner (Robert):** type any name + the owner PIN (`FLEET_OWNER_PIN`). That opens the owner account, which is always an Admin and can't be removed or demoted. The first name you type becomes the owner's name.
 - **Coworkers:** an admin adds them in ⚙ Settings → **👥 People & Permissions** → ＋ Add Person (name + a 4–8 digit PIN, Member or Admin). Tell them the name and PIN. Names aren't case sensitive.
 - In the same screen: change anyone's role (Member/Admin), 🔑 Reset PIN (signs them out everywhere), Remove (their notes/records stay). The owner/last admin can't be removed or demoted.
-- **Admins** can do everything. **Members** can always view and edit everything; the switches control adding/deleting. Defaults: parts add ✅ / delete ✅ (Parts page + machine parts), notes/service/checklists/inspections/manuals add ✅ delete ❌, equipment add/delete ❌, to-dos add/delete ❌, edit chip lists ❌.
+- **Admins** can do everything. **Members** can always view and edit everything; the switches control adding/deleting. Defaults: parts add ✅ / delete ✅ (Parts page + machine parts), priority items add/delete ❌, notes/service/checklists/inspections/manuals add ✅ delete ❌, equipment add/delete ❌, to-dos add/delete ❌, edit chip lists ❌.
 - Why records are add-yes/delete-no: mechanics need to log work as it happens, but the history is the shop's record, so only admins can erase it.
 - Enforced on the server (403 "You don't have permission") and the buttons are hidden in the app. Notes/to-dos are stamped with the signed-in person's name; older notes keep their typed-in author.
 - PINs are stored scrypt-hashed. 8 wrong tries for one name from one phone → 15-minute wait. Deletes no longer ask for the admin code.
@@ -56,6 +56,13 @@ The main screen has an **Equipment | Parts** switch under the header. The **Part
 - The search bar on this page searches **any** part: shop parts plus every machine's parts (shown under "On Equipment" with the machine name and unit #). Tapping a machine part opens that machine's Parts tab with the part highlighted. The Equipment page search is equipment-only.
 - Stored in the new table `loose_parts` (`CREATE TABLE IF NOT EXISTS`). Four `EXAMPLE` shop parts are seeded once (flag file `fleet.db.loose-seeded`), so they don't come back after you delete them.
 - API: `GET/POST /api/loose`, `GET/PUT/DELETE /api/loose/:id` (DELETE needs `x-admin-code`), `POST /api/loose/:id/qty` (`{delta:+1|-1}`), `GET /api/loose/:id/photo`.
+
+## Priority page (v12)
+- 4th main tab **Priority** (always red, with a red ❗ icon and a yellow count of open items, shown on every main page). A separate list for urgent things (safety, breakdowns, parts needed) – its own table `priority_items`, not a filter of the To Do List.
+- Same layout as the other pages: search bar, editable chip rows **Status** (Open / In progress / Done) and **Category** (Safety / Breakdown / Parts needed / Other), cards with tap-to-mark-done, ＋ Add Priority Item, detail view, optional machine (tap to open it), optional due date (red when overdue), who added it and when.
+- Deleting a status moves items to Open; deleting a category leaves items with no category. Deleting a machine keeps its priority items, just unlinked.
+- Permissions: new switches **Add priority items** / **Delete priority items** (Members off by default, like to-dos). Members can still view, edit and mark done.
+- Additive migration: new table `priority_items`, lists seeded once (flag `fleet.db.lists4-seeded`). API: `GET/POST /api/priority`, `GET/PUT/DELETE /api/priority/:id`, `PUT /api/priority/:id/done {done}`; list kinds `pri_status`, `pri_category`.
 
 ## To Do List (v10)
 - Third main tab next to Equipment and Parts (`#/todo`). Own search (to-dos only: title, details, machine, who added), two editable chip rows: **Status** (Open / In progress / Done) and **Priority** (High / Normal / Low), each with ✎ Edit; “All” is fixed.

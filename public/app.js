@@ -44,8 +44,8 @@ async function demoApi(path,opt){
   if(path==='/me')return DEMO_ME;
   if(path==='/logout')return{ok:true};
   if(path.startsWith('/people')||path==='/permissions'){
-    const L={eq_add:'Add equipment',eq_delete:'Delete equipment',parts_add:'Add parts (shop + machine)',parts_delete:'Delete parts (shop + machine)',todo_add:'Add to-dos',todo_delete:'Delete to-dos',records_add:'Add notes, service records, checklists, inspections & manuals',records_delete:'Delete notes, service records, checklists, inspections & manuals',lists_edit:'Edit chip lists (types, categories, status…)'};
-    if(!d.people){d.people=[{id:1,name:'Demo User',role:'admin',is_owner:true},{id:2,name:'Example Mechanic',role:'member',is_owner:false}];d.mperms={eq_add:false,eq_delete:false,parts_add:true,parts_delete:true,todo_add:false,todo_delete:false,records_add:true,records_delete:false,lists_edit:false};}
+    const L={eq_add:'Add equipment',eq_delete:'Delete equipment',parts_add:'Add parts (shop + machine)',parts_delete:'Delete parts (shop + machine)',todo_add:'Add to-dos',todo_delete:'Delete to-dos',pri_add:'Add priority items',pri_delete:'Delete priority items',records_add:'Add notes, service records, checklists, inspections & manuals',records_delete:'Delete notes, service records, checklists, inspections & manuals',lists_edit:'Edit chip lists (types, categories, status…)'};
+    if(!d.people){d.people=[{id:1,name:'Demo User',role:'admin',is_owner:true},{id:2,name:'Example Mechanic',role:'member',is_owner:false}];d.mperms={eq_add:false,eq_delete:false,parts_add:true,parts_delete:true,todo_add:false,todo_delete:false,pri_add:false,pri_delete:false,records_add:true,records_delete:false,lists_edit:false};}
     const pid=+path.split('/')[2],u=d.people.find(p=>p.id===pid),na=()=>d.people.filter(p=>p.role==='admin').length;
     if(path==='/permissions'){Object.assign(d.mperms,b);demoSave(d);return{member_perms:d.mperms};}
     if(path==='/people'&&m==='GET')return{people:d.people,member_perms:d.mperms,labels:L};
@@ -62,8 +62,9 @@ async function demoApi(path,opt){
   if(!d.todos)d.todos=[];
   if(!d.lists.todo_status){d.lists.todo_status=['Open','In progress','Done'];d.lists.priority=['High','Normal','Low'];
     d.lists.roles.todo_status={'Open':'open','In progress':'doing','Done':'done'};d.lists.roles.priority={'High':'high','Normal':'normal','Low':'low'};demoSave(d);}
+  if(!d.lists.pri_status){d.lists.pri_status=['Open','In progress','Done'];d.lists.pri_category=['Safety','Breakdown','Parts needed','Other'];d.lists.roles.pri_status={'Open':'open','In progress':'doing','Done':'done'};demoSave(d);}
   {const L=d.lists,has=(k,v)=>L[k].find(o=>o.toLowerCase()===String(v).trim().toLowerCase()),add=(k,v)=>{v=String(v||'').trim();if(v&&!has(k,v)){L[k].push(v);return true;}return false;};
-   const rec=k=>k==='type'||k==='status'?[d.equipment,k]:k==='todo_status'?[d.todos,'status']:k==='priority'?[d.todos,'priority']:[d.loose||[],k],R=L.roles;
+   const rec=k=>k==='type'||k==='status'?[d.equipment,k]:k==='todo_status'?[d.todos,'status']:k==='priority'?[d.todos,'priority']:k==='pri_status'?[d.pitems||[],'status']:k==='pri_category'?[d.pitems||[],'category']:[d.loose||[],k],R=L.roles;
    const rv=(k,r)=>Object.keys(R[k]||{}).find(v=>R[k][v]===r&&L[k].includes(v));
    if((m==='POST'||m==='PUT')&&/^\/equipment(\/\d+)?$/.test(path)){add('type',b.type);add('status',b.status);}
    if((m==='POST'||m==='PUT')&&/^\/loose(\/\d+)?$/.test(path)){add('category',b.category);add('stock',b.stock);}
@@ -78,8 +79,19 @@ async function demoApi(path,opt){
      add('todo_status',v.status);add('priority',v.priority);const dn=v.status.toLowerCase()===doneV.toLowerCase();
      if(m==='POST'){const o={id:nid(),...v,author:b.author||null,done_at:dn?now:null,created_at:now};d.todos.push(o);demoSave(d);return{id:o.id};}
      Object.assign(t,v,{done_at:dn?(t.done_at||now):null});demoSave(d);return{ok:true};}
-   if(path==='/lists')return{type:L.type.slice(),category:L.category.slice(),status:L.status.slice(),stock:L.stock.slice(),todo_status:L.todo_status.slice(),priority:L.priority.slice(),roles:JSON.parse(JSON.stringify(R))};
-   if(x=path.match(/^\/lists\/(type|category|status|stock|todo_status|priority)(\/usage|\/order)?(?:\?(.*))?$/)){const k=x[1],q=new URLSearchParams(x[3]||''),[arr,col]=rec(k);
+   if(x=path.match(/^\/priority(?:\/(\d+))?(\/done)?$/)){if(!d.pitems)d.pitems=[];const id=x[1]&&+x[1],t=id&&d.pitems.find(o=>o.id===id);if(id&&!t)throw new Error('Not found');
+     const eqn=o=>{const e=d.equipment.find(e=>e.id===+o.equipment_id);return{...o,equipment_name:e?e.name:null,equipment_unit:e?e.unit:null};};
+     const doneV=rv('pri_status','done')||'Done',openV=rv('pri_status','open')||L.pri_status[0];
+     if(x[2]){t.status=b.done?doneV:openV;add('pri_status',t.status);t.done_at=b.done?now:null;t.updated_at=now;demoSave(d);return{ok:true,status:t.status};}
+     if(m==='GET')return id?eqn(t):d.pitems.map(eqn).sort((p,q)=>q.created_at.localeCompare(p.created_at));
+     if(m==='DELETE'){d.pitems=d.pitems.filter(o=>o.id!==id);demoSave(d);return{ok:true};}
+     const title=String(b.title||'').trim();if(!title)throw new Error('Title is required');
+     const v={title,notes:b.notes||null,status:String(b.status||'').trim()||openV,category:String(b.category||'').trim()||null,equipment_id:b.equipment_id?+b.equipment_id:null,due_date:b.due_date||null,updated_at:now};
+     add('pri_status',v.status);if(v.category)add('pri_category',v.category);const dn=v.status.toLowerCase()===doneV.toLowerCase();
+     if(m==='POST'){const o={id:nid(),...v,author:b.author||null,done_at:dn?now:null,created_at:now};d.pitems.push(o);demoSave(d);return{id:o.id};}
+     Object.assign(t,v,{done_at:dn?(t.done_at||now):null});demoSave(d);return{ok:true};}
+   if(path==='/lists')return{type:L.type.slice(),category:L.category.slice(),status:L.status.slice(),stock:L.stock.slice(),todo_status:L.todo_status.slice(),priority:L.priority.slice(),pri_status:L.pri_status.slice(),pri_category:L.pri_category.slice(),roles:JSON.parse(JSON.stringify(R))};
+   if(x=path.match(/^\/lists\/(type|category|status|stock|todo_status|priority|pri_status|pri_category)(\/usage|\/order)?(?:\?(.*))?$/)){const k=x[1],q=new URLSearchParams(x[3]||''),[arr,col]=rec(k);
      const uses=v=>arr.filter(r=>r[col]&&r[col].toLowerCase()===String(v).toLowerCase());
      if(x[2]==='/usage')return{count:uses(q.get('value')||'').length};
      if(x[2]==='/order'){const vs=(b.values||[]).filter(v=>L[k].includes(v));L[k]=vs.concat(L[k].filter(v=>!vs.includes(v)));demoSave(d);return{ok:true};}
@@ -87,7 +99,7 @@ async function demoApi(path,opt){
      if(m==='PUT'){const from=b.from,to=String(b.to||'').trim(),i=L[k].indexOf(from);if(i<0)throw new Error('Not found');if(!to)throw new Error('Enter a name');
        const o=has(k,to),merged=!!(o&&o!==from);if(merged)L[k].splice(i,1);else L[k][i]=to;if(R[k]&&R[k][from]){if(!merged)R[k][to]=R[k][from];delete R[k][from];}uses(from).forEach(r=>{r[col]=merged?o:to;r.updated_at=now;});demoSave(d);return{ok:true,merged};}
      if(m==='DELETE'){const v=q.get('value'),i=L[k].findIndex(o=>o.toLowerCase()===String(v).toLowerCase());let rep=(q.get('replace')||'').trim()||null;if(i<0)throw new Error('Not found');
-       if(['status','todo_status','priority'].includes(k)){if(L[k].length<2)throw new Error('Keep at least one');if(!rep)rep=L[k].find((o,j)=>j!==i);}
+       if(['status','todo_status','priority','pri_status'].includes(k)){if(L[k].length<2)throw new Error('Keep at least one');if(!rep)rep=L[k].find((o,j)=>j!==i);}
        if(R[k])delete R[k][L[k][i]];L[k].splice(i,1);uses(v).forEach(r=>{r[col]=rep;r.updated_at=now;});if(rep)add(k,rep);demoSave(d);return{ok:true};}}}
   if(x=path.match(/^\/equipment\/(\d+)\/checklists$/)){const id=+x[1];
     if(m==='GET')return d.checklists.filter(c=>c.equipment_id===id).map(c=>{const ins=d.inspections.filter(i=>i.checklist_id===c.id);return{...c,inspection_count:ins.length,last_done:ins.map(i=>i.created_at).sort().pop()||null};}).sort((p,q)=>p.is_example-q.is_example||p.name.localeCompare(q.name));
@@ -182,7 +194,8 @@ function route(){
   if(!isDemo()&&!routeMe){routeMe=1;loadMe().then(gate);}
   $('#menu').hidden=false;document.body.classList.remove('login-bg');
   const m=location.hash.match(/^#\/eq\/(\d+)/);
-  m?detail(+m[1]):location.hash==='#/parts'?partsPage():location.hash==='#/todo'?todoPage():list();
+  m?detail(+m[1]):location.hash==='#/parts'?partsPage():location.hash==='#/todo'?todoPage():location.hash==='#/priority'?priorityPage():list();
+  if(location.hash!=='#/priority'&&!m)refreshPriCount();
 }
 
 let cache=[];
@@ -512,7 +525,8 @@ function docSheet(e,d){
   $('#del').onclick=()=>adminConfirm(`Delete “${esc(d.title)}”?`,'This permanently removes the file. This cannot be undone.','Delete',async a=>{await api('/docs/'+d.id,{method:'DELETE',admin:a});toast('Deleted');backToProc(e);});
 }
 // ---------- Shop Parts page (loose parts not tied to a machine) ----------
-const SEG=on=>`<nav class="seg seg3" aria-label="Main pages"><button class="${on==='eq'?'on':''}" onclick="location.hash=''"><i>🚜</i>Equipment</button><button class="${on==='parts'?'on':''}" onclick="location.hash='#/parts'"><i>🔩</i>Parts</button><button class="${on==='todo'?'on':''}" onclick="location.hash='#/todo'"><i>✅</i>To Do List</button></nav>`;
+let PRI_OPEN=0;
+const SEG=on=>`<nav class="seg seg3 seg4" aria-label="Main pages"><button class="${on==='eq'?'on':''}" onclick="location.hash=''"><i>🚜</i>Equipment</button><button class="${on==='parts'?'on':''}" onclick="location.hash='#/parts'"><i>🔩</i>Parts</button><button class="${on==='todo'?'on':''}" onclick="location.hash='#/todo'"><i>✅</i>To Do List</button><button class="seg-pri ${on==='pri'?'on':''}" onclick="location.hash='#/priority'" aria-label="Priority"><i class="pri-ic">!</i>Priority<b class="prict" ${PRI_OPEN?'':'hidden'}>${PRI_OPEN}</b></button></nav>`;
 let loose=[],machParts=[];
 async function partsPage(){
   header('Fleet Files',false);
@@ -599,19 +613,19 @@ function looseForm(p){
 }
 // ---------- Editable lists (equipment types, shop-part categories) ----------
 const STOCKS=['In stock','Low stock','Out of stock'];
-const LISTS={type:TYPES.slice(),category:CATS.slice(),status:STATUSES.slice(),stock:STOCKS.slice(),todo_status:['Open','In progress','Done'],priority:['High','Normal','Low'],
-  roles:{status:{'in service':'ok','in shop':'shop','down':'down'},stock:{'In stock':'in','Low stock':'low','Out of stock':'out'},todo_status:{'Open':'open','In progress':'doing','Done':'done'},priority:{'High':'high','Normal':'normal','Low':'low'}}};
+const LISTS={type:TYPES.slice(),category:CATS.slice(),status:STATUSES.slice(),stock:STOCKS.slice(),todo_status:['Open','In progress','Done'],priority:['High','Normal','Low'],pri_status:['Open','In progress','Done'],pri_category:['Safety','Breakdown','Parts needed','Other'],
+  roles:{status:{'in service':'ok','in shop':'shop','down':'down'},stock:{'In stock':'in','Low stock':'low','Out of stock':'out'},todo_status:{'Open':'open','In progress':'doing','Done':'done'},priority:{'High':'high','Normal':'normal','Low':'low'},pri_status:{'Open':'open','In progress':'doing','Done':'done'}}};
 // a shop part's stock label: the one picked on the part, or automatic from qty (In / Low / Out roles)
 const roleVal=(k,r)=>Object.entries((LISTS.roles||{})[k]||{}).find(([v,x])=>x===r&&LISTS[k].includes(v))?.[0]||'';
 const autoStock=p=>p.qty==null||p.qty===''?'':Number(p.qty)<=0?roleVal('stock','out'):isLow(p)?roleVal('stock','low'):roleVal('stock','in');
 const effStock=p=>p.stock||autoStock(p);
-const LNAME={type:['type','types','machine','machines'],category:['category','categories','shop part','shop parts'],status:['status','statuses','machine','machines'],stock:['stock status','stock statuses','shop part','shop parts'],todo_status:['status','statuses','to-do','to-dos'],priority:['priority','priorities','to-do','to-dos']};
+const LNAME={type:['type','types','machine','machines'],category:['category','categories','shop part','shop parts'],status:['status','statuses','machine','machines'],stock:['stock status','stock statuses','shop part','shop parts'],todo_status:['status','statuses','to-do','to-dos'],priority:['priority','priorities','to-do','to-dos'],pri_status:['status','statuses','priority item','priority items'],pri_category:['category','categories','priority item','priority items']};
 async function loadLists(){try{const l=await api('/lists');if(l&&l.type){Object.assign(LISTS,l);LISTS.roles=l.roles||{};}}catch(e){}}
 const editChip=kind=>`<button data-perm="lists_edit" class="chip chip-edit" data-edit="${kind}" aria-label="Edit ${LNAME[kind][1]}">✎ Edit</button>`;
 // <select> of the list + "New…" which reveals a text box
 function pickField(id,label,kind,val){const vs=LISTS[kind].slice();if(val&&!vs.some(v=>v.toLowerCase()===String(val).toLowerCase()))vs.push(val);
   return `<div><label for="${id}">${label}</label><select id="${id}" onchange="document.getElementById('${id}_new').hidden=this.value!=='__new'">
-   ${kind==='category'||kind==='stock'?`<option value="" ${!val?'selected':''}>${kind==='stock'?'Automatic (from qty)':'— none —'}</option>`:''}${vs.map(v=>`<option value="${esc(v)}" ${v===val?'selected':''}>${esc(v)}</option>`).join('')}<option value="__new">＋ New ${LNAME[kind][0]}…</option></select>
+   ${kind==='category'||kind==='stock'||kind==='pri_category'?`<option value="" ${!val?'selected':''}>${kind==='stock'?'Automatic (from qty)':'— none —'}</option>`:''}${vs.map(v=>`<option value="${esc(v)}" ${v===val?'selected':''}>${esc(v)}</option>`).join('')}<option value="__new">＋ New ${LNAME[kind][0]}…</option></select>
    <input id="${id}_new" hidden placeholder="Type a new ${LNAME[kind][0]}" style="margin-top:6px"></div>`;}
 const pickVal=id=>{const s=$('#'+id);return s.value==='__new'?$('#'+id+'_new').value.trim():s.value;};
 async function listEditor(kind,after){
@@ -621,7 +635,7 @@ async function listEditor(kind,after){
      <div id="lerows">${vs.map((v,i)=>`<div class="lerow"><input class="lein" data-i="${i}" value="${esc(v)}" aria-label="${esc(v)}">
       <button class="btn lebtn" data-up="${i}" ${i?'':'disabled'} aria-label="Move up">↑</button><button class="btn lebtn" data-dn="${i}" ${i<vs.length-1?'':'disabled'} aria-label="Move down">↓</button>
       <button class="btn lebtn danger" data-del="${i}" aria-label="Delete ${esc(v)}">🗑</button></div>`).join('')||'<div class="empty">No '+many+' yet.</div>'}</div>
-     <label for="lenew">Add a new ${one}</label><div class="row"><input id="lenew" placeholder="e.g. ${({type:'skid steer',category:'Lights',status:'waiting on parts',stock:'On order',todo_status:'Waiting on parts',priority:'Urgent'})[kind]}" style="flex:2"><button class="btn primary" id="leadd">＋ Add</button></div>
+     <label for="lenew">Add a new ${one}</label><div class="row"><input id="lenew" placeholder="e.g. ${({type:'skid steer',category:'Lights',status:'waiting on parts',stock:'On order',todo_status:'Waiting on parts',priority:'Urgent',pri_status:'Waiting on parts',pri_category:'Hydraulics'})[kind]}" style="flex:2"><button class="btn primary" id="leadd">＋ Add</button></div>
      <button class="btn block" id="x" style="margin-top:16px">Done</button>`);
     $('#x').onclick=()=>{close();after();};
     $('#leadd').onclick=async()=>{const v=$('#lenew').value.trim();if(!v)return toast('Type a name first');
@@ -633,7 +647,7 @@ async function listEditor(kind,after){
     $('#modal').querySelectorAll('[data-dn]').forEach(b=>b.onclick=()=>move(+b.dataset.dn,+b.dataset.dn+1));
     $('#modal').querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{const v=vs[+b.dataset.del];
       let n=0;try{n=(await api(`/lists/${kind}/usage?value=`+encodeURIComponent(v))).count;}catch(x){}
-      const REQ={status:'ok',todo_status:'open',priority:'normal'};
+      const REQ={status:'ok',todo_status:'open',priority:'normal',pri_status:'open'};
       if(REQ[kind]&&LISTS[kind].length<2)return toast('Keep at least one '+one);
       const rest=LISTS[kind].filter(t=>t.toLowerCase()!==v.toLowerCase());
       const repl=kind==='type'?(rest.find(t=>t.toLowerCase()==='other')||''):REQ[kind]?(rest.find(t=>LISTS.roles[kind]?.[t]===REQ[kind])||rest[0]):'';
@@ -641,7 +655,7 @@ async function listEditor(kind,after){
       const auto=kind==='stock'&&LISTS.roles.stock?.[v]?` Parts on Automatic won’t get the “${esc(v)}” label any more (the orange LOW warning still shows).`:'';
       const msg=(n?`<b>${n} ${n===1?thing:things}</b> use “${esc(v)}”. They’ll be set to ${to}.`:`No ${things} use “${esc(v)}”.`)+auto;
       adminConfirm(`Delete “${esc(v)}”?`,msg,'Delete',async a=>{await api(`/lists/${kind}?value=${encodeURIComponent(v)}&replace=${encodeURIComponent(repl)}`,{method:'DELETE',admin:a});
-        if(kind==='type'&&state.type===v)state.type='all';if(kind==='category'&&state.lcat===v)state.lcat='all';if(kind==='status'&&state.status===v)state.status='all';if(kind==='stock'&&state.lstock===v)state.lstock='all';if(kind==='todo_status'&&state.tstat===v)state.tstat='all';if(kind==='priority'&&state.tpri===v)state.tpri='all';await loadLists();toast('Deleted');draw();});});
+        if(kind==='type'&&state.type===v)state.type='all';if(kind==='category'&&state.lcat===v)state.lcat='all';if(kind==='status'&&state.status===v)state.status='all';if(kind==='stock'&&state.lstock===v)state.lstock='all';if(kind==='todo_status'&&state.tstat===v)state.tstat='all';if(kind==='priority'&&state.tpri===v)state.tpri='all';if(kind==='pri_status'&&state.pstat===v)state.pstat='all';if(kind==='pri_category'&&state.pcat===v)state.pcat='all';await loadLists();toast('Deleted');draw();});});
   };draw();
 }
 // ---------- To Do List (v10) ----------
@@ -716,9 +730,81 @@ async function todoForm(t){
     try{if(isNew)await api('/todos',{method:'POST',body:b});else await api('/todos/'+t.id,{method:'PUT',body:b});close();toast(isNew?'To-do added':'Saved');todoPage();}catch(x){toast(x.message);}};
   if(!isNew)$('#del').onclick=()=>adminConfirm(`Delete “${esc(t.title)}”?`,'This permanently removes this to-do. This cannot be undone.','Delete',async a=>{await api('/todos/'+t.id,{method:'DELETE',admin:a});close();toast('Deleted');todoPage();});
 }
+// ---------- Priority (v12): separate list of urgent items ----------
+const piRole=s=>((LISTS.roles||{}).pri_status||{})[s];
+const piDone=t=>piRole(t.status)==='done';
+let pitems=[];
+function setPriCount(n){PRI_OPEN=n;document.querySelectorAll('.prict').forEach(b=>{b.textContent=n;b.hidden=!n;});}
+async function refreshPriCount(){try{setPriCount((await api('/priority')).filter(t=>!piDone(t)).length);}catch(e){}}
+async function priorityPage(){
+  header('Priority',false);
+  state.pq=state.pq||'';state.pstat=state.pstat||'all';state.pcat=state.pcat||'all';
+  app.innerHTML=SEG('pri')+`<input class="search" id="pq" type="search" placeholder="🔍  Search priority items, notes, machine…" value="${esc(state.pq)}">
+   <div class="chips" id="psc"></div><div class="chips" id="pcc"></div><div id="list"><div class="empty">Loading…</div></div>
+   <button class="btn primary fab pri-fab" data-perm="pri_add" id="add">＋ Add Priority Item</button>`;
+  $('#add').onclick=()=>priForm();
+  let qt;$('#pq').oninput=e=>{state.pq=e.target.value;clearTimeout(qt);qt=setTimeout(drawPri,150);};
+  const chipRow=(id,kind,key)=>{$(id).onclick=e=>{if(e.target.closest('[data-edit]'))return listEditor(kind,priorityPage);const b=e.target.closest('.chip');if(!b)return;state[key]=b.dataset.v;drawPri();};};
+  chipRow('#psc','pri_status','pstat');chipRow('#pcc','pri_category','pcat');
+  await loadLists();
+  try{pitems=await api('/priority');}catch(e){$('#list').innerHTML=`<div class="empty">${esc(e.message)}</div>`;return;}
+  drawPri();
+}
+function drawPri(){if(!$('#psc'))return;
+  if(state.pstat!=='all'&&!LISTS.pri_status.includes(state.pstat))state.pstat='all';if(state.pcat!=='all'&&!LISTS.pri_category.includes(state.pcat))state.pcat='all';
+  const row=(el,arr,key,allLbl,kind)=>{$(el).innerHTML=['all',...arr].map(v=>`<button class="chip ${state[key]===v?'on':''}" data-v="${esc(v)}">${v==='all'?allLbl:esc(v)}</button>`).join('')+editChip(kind);};
+  row('#psc',LISTS.pri_status,'pstat','All status','pri_status');row('#pcc',LISTS.pri_category,'pcat','All category','pri_category');
+  const q=state.pq.trim().toLowerCase();
+  const rows=pitems.filter(t=>(state.pstat==='all'||t.status===state.pstat)&&(state.pcat==='all'||t.category===state.pcat)&&
+    (!q||[t.title,t.notes,t.category,t.equipment_name,t.equipment_unit,t.author].some(x=>x&&String(x).toLowerCase().includes(q))))
+   .sort((a,b)=>piDone(a)-piDone(b)||(a.due_date||'9999').localeCompare(b.due_date||'9999')||b.created_at.localeCompare(a.created_at));
+  const open=pitems.filter(t=>!piDone(t)).length,od=pitems.filter(t=>!piDone(t)&&t.due_date&&t.due_date<today()).length;setPriCount(open);
+  $('#list').innerHTML=`<div class="mini">${rows.length} of ${pitems.length} priority items · ${open} open${od?` · <b style="color:var(--red)">${od} overdue</b>`:''}</div>`+
+   (rows.length?rows.map(t=>`<div class="tcard pcard ${piDone(t)?'done':''}" data-id="${t.id}">
+     <button class="tcheck" data-done="${t.id}" aria-label="${piDone(t)?'Mark not done':'Mark done'}">${piDone(t)?'✓':''}</button>
+     <div class="main"><div class="name">${esc(t.title)}</div>
+      <div class="sub">${t.category?`<span class="badge b-pri">${esc(t.category)}</span>`:''}<span class="badge b-td">${esc(t.status||'')}</span>${t.due_date?`<span class="due ${!piDone(t)&&t.due_date<today()?'late':''}">📅 ${fmtDate(t.due_date)}</span>`:''}</div>
+      ${t.equipment_id&&t.equipment_name?`<button class="eqlink" data-eq="${t.equipment_id}">🚜 ${esc(t.equipment_name)}${t.equipment_unit?' · #'+esc(t.equipment_unit):''}</button>`:''}</div>
+     <div class="chev">›</div></div>`).join(''):`<div class="empty">${pitems.length?'No priority items match.':'No priority items. Tap “＋ Add Priority Item” for anything urgent.'}</div>`);
+  $('#list').onclick=e=>{const d=e.target.closest('[data-done]');if(d)return priDone(pitems.find(t=>t.id===+d.dataset.done));
+    const q=e.target.closest('[data-eq]');if(q){location.hash='#/eq/'+q.dataset.eq;return;}
+    const c=e.target.closest('.tcard');if(c)priDetail(pitems.find(t=>t.id===+c.dataset.id));};
+}
+async function priDone(t,after){try{const r=await api(`/priority/${t.id}/done`,{method:'PUT',body:{done:!piDone(t)}});t.status=r.status;t.done_at=piDone(t)?new Date().toISOString():null;
+  toast(piDone(t)?'Marked done ✓':'Reopened');await loadLists();if(after)after();else drawPri();}catch(x){toast(x.message);}}
+function priDetail(t){
+  const kv=(k,v)=>`<div class="kv"><b>${k}</b><span>${v||'—'}</span></div>`;
+  modal(`<h2><span class="pri-ic">!</span> ${esc(t.title)}</h2><div class="sub" style="margin-bottom:8px">${t.category?`<span class="badge b-pri">${esc(t.category)}</span>`:''}<span class="badge b-td">${esc(t.status)}</span></div>
+   ${t.notes?`<div class="item"><div class="body" style="white-space:pre-wrap">${esc(t.notes)}</div></div>`:''}
+   <div class="grid">${kv('Due',t.due_date?fmtDate(t.due_date):'')}${kv('Machine',t.equipment_name?esc(t.equipment_name):'')}${kv('Added by',esc(t.author))}${kv('Added',fmtTime(t.created_at))}${kv('Updated',fmtTime(t.updated_at))}${t.done_at?kv('Done',fmtTime(t.done_at)):''}</div>
+   <button class="btn ${piDone(t)?'':'primary'} block" id="dn" style="margin-top:12px">${piDone(t)?'↺ Reopen':'✓ Mark Done'}</button>
+   ${t.equipment_id&&t.equipment_name?`<button class="btn block" id="oe" style="margin-top:8px">🚜 Open ${esc(t.equipment_name)}</button>`:''}
+   <div class="row" style="margin-top:8px"><button class="btn" id="x">Close</button><button class="btn" id="ed">✎ Edit</button></div>`);
+  $('#x').onclick=close;$('#ed').onclick=()=>priForm(t);
+  $('#dn').onclick=()=>priDone(t,()=>{drawPri();priDetail(t);});
+  if($('#oe'))$('#oe').onclick=()=>{close();location.hash='#/eq/'+t.equipment_id;};
+}
+async function priForm(t){
+  const isNew=!t;t=t||{status:roleVal('pri_status','open')||LISTS.pri_status[0]};
+  let eqs=[];try{eqs=await api('/equipment');}catch(e){}
+  modal(`<h2>${isNew?'Add Priority Item':'Edit Priority Item'}</h2>
+   <label for="pi_title">What’s urgent? *</label><input id="pi_title" value="${esc(t.title)}" placeholder="e.g. Loader brakes soft – do not run">
+   <label for="pi_notes">Details</label><textarea id="pi_notes" placeholder="What happened, what’s needed…">${esc(t.notes)}</textarea>
+   <div class="row">${pickField('pi_status','Status','pri_status',t.status)}${pickField('pi_category','Category','pri_category',t.category)}</div>
+   <label for="pi_eq">Machine (optional)</label><select id="pi_eq"><option value="">— none —</option>${eqs.map(e=>`<option value="${e.id}" ${+t.equipment_id===e.id?'selected':''}>${esc(e.name)}${e.unit?' · #'+esc(e.unit):''}</option>`).join('')}</select>
+   <label for="pi_due">Due date (optional)</label><input id="pi_due" type="date" value="${esc(t.due_date)}">
+   <div class="mini" style="margin-top:8px">${isNew?`Added by <b>${esc(store.name)}</b>`:`Added by <b>${esc(t.author||'—')}</b> · ${fmtTime(t.created_at)}`}</div>
+   <div class="row" style="margin-top:16px"><button class="btn" id="x">Cancel</button><button class="btn primary" id="s">Save</button></div>
+   ${isNew?'':'<button class="btn danger block" data-perm="pri_delete" id="del" style="margin-top:22px">🗑 Delete Priority Item</button>'}`);
+  $('#x').onclick=close;
+  $('#s').onclick=async()=>{const b={title:$('#pi_title').value.trim(),notes:$('#pi_notes').value.trim(),status:pickVal('pi_status'),category:pickVal('pi_category'),equipment_id:$('#pi_eq').value||null,due_date:$('#pi_due').value||null,author:store.name};
+    if(!b.title)return toast('Title is required');
+    try{if(isNew)await api('/priority',{method:'POST',body:b});else await api('/priority/'+t.id,{method:'PUT',body:b});close();toast(isNew?'Priority item added':'Saved');priorityPage();}catch(x){toast(x.message);}};
+  if(!isNew)$('#del').onclick=()=>adminConfirm(`Delete “${esc(t.title)}”?`,'This permanently removes this priority item. This cannot be undone.','Delete',async()=>{await api('/priority/'+t.id,{method:'DELETE'});close();toast('Deleted');priorityPage();});
+}
 // ---------- People & permissions (v11) ----------
 let ME=null;try{ME=JSON.parse(LS.ff_me||'null');}catch(e){}
-const DEMO_ME={user:{id:1,name:'Demo User',role:'admin',is_owner:true},perms:{eq_add:1,eq_delete:1,parts_add:1,parts_delete:1,todo_add:1,todo_delete:1,records_add:1,records_delete:1,lists_edit:1}};
+const DEMO_ME={user:{id:1,name:'Demo User',role:'admin',is_owner:true},perms:{eq_add:1,eq_delete:1,parts_add:1,parts_delete:1,todo_add:1,todo_delete:1,pri_add:1,pri_delete:1,records_add:1,records_delete:1,lists_edit:1}};
 const isAdmin=()=>isDemo()||(ME&&ME.user.role==='admin');
 const can=p=>isDemo()||!!(ME&&(ME.user.role==='admin'||ME.perms[p]));
 async function loadMe(){if(isDemo())return;try{ME=await api('/me');LS.ff_me=JSON.stringify(ME);store.name=ME.user.name;}catch(e){}}

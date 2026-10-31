@@ -95,7 +95,9 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
     stock: { table: 'loose_parts', col: 'stock', seed: ['In stock', 'Low stock', 'Out of stock'], roles: { 'In stock': 'in', 'Low stock': 'low', 'Out of stock': 'out' } },
     // v10: To Do List
     todo_status: { table: 'todos', col: 'status', required: true, seed: ['Open', 'In progress', 'Done'], roles: { 'Open': 'open', 'In progress': 'doing', 'Done': 'done' } },
-    priority: { table: 'todos', col: 'priority', required: true, seed: ['High', 'Normal', 'Low'], roles: { 'High': 'high', 'Normal': 'normal', 'Low': 'low' } } };
+    priority: { table: 'todos', col: 'priority', required: true, seed: ['High', 'Normal', 'Low'], roles: { 'High': 'high', 'Normal': 'normal', 'Low': 'low' } },
+    pri_status: { table: 'priority_items', col: 'status', required: true, seed: ['Open', 'In progress', 'Done'], roles: { 'Open': 'open', 'In progress': 'doing', 'Done': 'done' } },
+    pri_category: { table: 'priority_items', col: 'category', seed: ['Safety', 'Breakdown', 'Parts needed', 'Other'] } };
   db.exec(`CREATE TABLE IF NOT EXISTS todos(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, notes TEXT, status TEXT, priority TEXT, equipment_id INTEGER, due_date TEXT, author TEXT, done_at TEXT, created_at TEXT, updated_at TEXT);`);
   // additive columns (ADD COLUMN only, never drops): lists.role, loose_parts.stock (blank = automatic from qty)
   const hasCol = (t, c) => all(`PRAGMA table_info(${t})`).some(r => r.name === c);
@@ -125,6 +127,14 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
     save(); fs.writeFileSync(DB_FILE + '.lists3-seeded', now());
   }
 
+  // v12: Priority items – own table + own status/category lists, seeded once
+  db.exec(`CREATE TABLE IF NOT EXISTS priority_items(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, notes TEXT, status TEXT, category TEXT, equipment_id INTEGER, due_date TEXT, author TEXT, done_at TEXT, created_at TEXT, updated_at TEXT);`);
+  if (!fs.existsSync(DB_FILE + '.lists4-seeded')) {
+    for (const k of ['pri_status', 'pri_category']) { const L = LISTS[k];
+      for (const v of L.seed) { addVal(k, v); if (L.roles) db.run('UPDATE lists SET role=? WHERE kind=? AND value=? AND role IS NULL', [L.roles[v], k, v]); } }
+    save(); fs.writeFileSync(DB_FILE + '.lists4-seeded', now());
+  }
+
   // ---- People & permissions (v11). Additive tables only. ----
   const crypto = require('crypto');
   db.exec(`CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, pin_salt TEXT, pin_hash TEXT, role TEXT NOT NULL DEFAULT 'member', is_owner INTEGER DEFAULT 0, created_at TEXT, updated_at TEXT);
@@ -133,9 +143,9 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
   // Owner PIN: FLEET_OWNER_PIN, else falls back to the old shared access code so the owner is never locked out after deploy.
   const OWNER_PIN = String(process.env.FLEET_OWNER_PIN || ACCESS_CODE);
   const PERMS = { eq_add: 'Add equipment', eq_delete: 'Delete equipment', parts_add: 'Add parts (shop + machine)', parts_delete: 'Delete parts (shop + machine)',
-    todo_add: 'Add to-dos', todo_delete: 'Delete to-dos', records_add: 'Add notes, service records, checklists, inspections & manuals',
+    todo_add: 'Add to-dos', todo_delete: 'Delete to-dos', pri_add: 'Add priority items', pri_delete: 'Delete priority items', records_add: 'Add notes, service records, checklists, inspections & manuals',
     records_delete: 'Delete notes, service records, checklists, inspections & manuals', lists_edit: 'Edit chip lists (types, categories, status…)' };
-  const MEMBER_DEFAULTS = { eq_add: false, eq_delete: false, parts_add: true, parts_delete: true, todo_add: false, todo_delete: false, records_add: true, records_delete: false, lists_edit: false };
+  const MEMBER_DEFAULTS = { eq_add: false, eq_delete: false, parts_add: true, parts_delete: true, todo_add: false, todo_delete: false, pri_add: false, pri_delete: false, records_add: true, records_delete: false, lists_edit: false };
   const memberPerms = () => { let s = {}; try { s = JSON.parse((get("SELECT value FROM settings WHERE key='member_perms'") || {}).value || '{}'); } catch (e) {}
     return Object.fromEntries(Object.keys(PERMS).map(k => [k, typeof s[k] === 'boolean' ? s[k] : MEMBER_DEFAULTS[k]])); };
   const permsFor = u => u.role === 'admin' ? Object.fromEntries(Object.keys(PERMS).map(k => [k, true])) : memberPerms();
@@ -233,7 +243,7 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
   api.delete('/equipment/:id', need('eq_delete'), (req, res) => {
     const docs = all('SELECT stored_name FROM documents WHERE equipment_id=?', [+req.params.id]);
     run('DELETE FROM equipment WHERE id=?', [+req.params.id]);
-    run('UPDATE todos SET equipment_id=NULL WHERE equipment_id=?', [+req.params.id]); // keep the to-dos, just unlink
+    run('UPDATE todos SET equipment_id=NULL WHERE equipment_id=?', [+req.params.id]); run('UPDATE priority_items SET equipment_id=NULL WHERE equipment_id=?', [+req.params.id]); // keep the to-dos, just unlink
     for (const d of docs) fs.rm(path.join(path.dirname(DB_FILE), 'docs', path.basename(d.stored_name)), { force: true }, () => {});
     res.json({ ok: true });
   });
@@ -285,7 +295,7 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
   const kindOk = (req, res, next) => LISTS[req.params.kind] ? next() : res.status(404).json({ error: 'Unknown list' });
   api.get('/lists', (req, res) => { const roles = {};
     for (const r of all("SELECT kind,value,role FROM lists WHERE role IS NOT NULL")) (roles[r.kind] = roles[r.kind] || {})[r.value] = r.role;
-    res.json({ type: listVals('type'), category: listVals('category'), status: listVals('status'), stock: listVals('stock'), todo_status: listVals('todo_status'), priority: listVals('priority'), roles }); });
+    res.json({ type: listVals('type'), category: listVals('category'), status: listVals('status'), stock: listVals('stock'), todo_status: listVals('todo_status'), priority: listVals('priority'), pri_status: listVals('pri_status'), pri_category: listVals('pri_category'), roles }); });
   api.get('/lists/:kind/usage', kindOk, (req, res) => { const L = LISTS[req.params.kind];
     res.json({ count: get(`SELECT COUNT(*) c FROM ${L.table} WHERE ${L.col}=? COLLATE NOCASE`, [String(req.query.value || '')]).c }); });
   api.post('/lists/:kind', kindOk, need('lists_edit'), (req, res) => { const v = String(req.body.value || '').trim(); if (!v) return res.status(400).json({ error: 'Enter a name' });
@@ -303,7 +313,7 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
     if (!findVal(k, v)) return res.status(404).json({ error: 'Not found' });
     let rep = String(req.query.replace || '').trim() || null;
     if (L.required) { const rest = listVals(k).filter(x => x.toLowerCase() !== v.toLowerCase());
-      if (!rest.length) return res.status(400).json({ error: 'Keep at least one ' + (k === 'priority' ? 'priority' : 'status') }); if (!rep) rep = rest[0]; }
+      if (!rest.length) return res.status(400).json({ error: 'Keep at least one ' + (k === 'priority' ? 'priority' : k === 'pri_category' ? 'category' : 'status') }); if (!rep) rep = rest[0]; }
     if (rep && rep.toLowerCase() === v.toLowerCase()) return res.status(400).json({ error: 'Pick a different replacement' });
     db.run('DELETE FROM lists WHERE kind=? AND value=? COLLATE NOCASE', [k, v]);
     db.run(`UPDATE ${L.table} SET ${L.col}=?, updated_at=? WHERE ${L.col}=? COLLATE NOCASE`, [rep, now(), v]);
@@ -329,6 +339,25 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
     const s = req.body.done ? (roleOf('todo_status', 'done') || 'Done') : (roleOf('todo_status', 'open') || listVals('todo_status')[0] || 'Open'); addVal('todo_status', s);
     run('UPDATE todos SET status=?,done_at=?,updated_at=? WHERE id=?', [s, req.body.done ? now() : null, now(), t.id]); res.json({ ok: true, status: s }); });
   api.delete('/todos/:id', need('todo_delete'), (req, res) => { run('DELETE FROM todos WHERE id=?', [+req.params.id]); res.json({ ok: true }); });
+  // ---- Priority items (v12): separate urgent list, same shape as to-dos but with a category ----
+  const PQ = `SELECT t.*, e.name equipment_name, e.unit equipment_unit FROM priority_items t LEFT JOIN equipment e ON e.id=t.equipment_id`;
+  const pivals = b => { const s = String(b.status || '').trim() || roleOf('pri_status', 'open') || listVals('pri_status')[0] || 'Open';
+    const c = String(b.category || '').trim() || null; addVal('pri_status', s); if (c) addVal('pri_category', c);
+    return { title: String(b.title || '').trim(), notes: b.notes || null, status: s, category: c, equipment_id: b.equipment_id ? +b.equipment_id : null, due_date: b.due_date || null }; };
+  const pDoneAt = (s, prev) => (roleOf('pri_status', 'done') || '').toLowerCase() === s.toLowerCase() ? (prev || now()) : null;
+  const pget = id => get('SELECT * FROM priority_items WHERE id=?', [+id]);
+  api.get('/priority', (req, res) => res.json(all(PQ + ' ORDER BY t.created_at DESC')));
+  api.get('/priority/:id', (req, res) => { const t = get(PQ + ' WHERE t.id=?', [+req.params.id]); t ? res.json(t) : res.status(404).json({ error: 'Not found' }); });
+  api.post('/priority', need('pri_add'), (req, res) => { const v = pivals(req.body); if (!v.title) return res.status(400).json({ error: 'Title is required' });
+    res.status(201).json({ id: run('INSERT INTO priority_items(title,notes,status,category,equipment_id,due_date,author,done_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)',
+      [v.title, v.notes, v.status, v.category, v.equipment_id, v.due_date, req.user.name, pDoneAt(v.status), now(), now()]) }); });
+  api.put('/priority/:id', (req, res) => { const t = pget(req.params.id); if (!t) return res.status(404).json({ error: 'Not found' });
+    const v = pivals(req.body); if (!v.title) return res.status(400).json({ error: 'Title is required' });
+    run('UPDATE priority_items SET title=?,notes=?,status=?,category=?,equipment_id=?,due_date=?,done_at=?,updated_at=? WHERE id=?', [v.title, v.notes, v.status, v.category, v.equipment_id, v.due_date, pDoneAt(v.status, t.done_at), now(), t.id]); res.json({ ok: true }); });
+  api.put('/priority/:id/done', (req, res) => { const t = pget(req.params.id); if (!t) return res.status(404).json({ error: 'Not found' });
+    const s = req.body.done ? (roleOf('pri_status', 'done') || 'Done') : (roleOf('pri_status', 'open') || listVals('pri_status')[0] || 'Open'); addVal('pri_status', s);
+    run('UPDATE priority_items SET status=?,done_at=?,updated_at=? WHERE id=?', [s, req.body.done ? now() : null, now(), t.id]); res.json({ ok: true, status: s }); });
+  api.delete('/priority/:id', need('pri_delete'), (req, res) => { run('DELETE FROM priority_items WHERE id=?', [+req.params.id]); res.json({ ok: true }); });
 
   // ---- Loose shop parts ----
   const LF = ['name', 'part_number', 'manufacturer', 'category', 'stock', 'qty', 'reorder_level', 'bin', 'fits', 'supplier', 'notes', 'photo'];

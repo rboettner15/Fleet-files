@@ -152,3 +152,17 @@ body.login-bg .login{padding-top:24vh}
 .toggle i:after{content:'';position:absolute;left:3px;top:3px;width:24px;height:24px;border-radius:50%;background:#fff;transition:.2s}
 .toggle input:checked+i{background:#ffd400}.toggle input:checked+i:after{left:25px}
 .sec-h{font-weight:700;color:#ffd400;margin-top:14px;font-size:17px}
+
+/* ---- v12 Priority tab + page ---- */
+.seg.seg4{gap:3px;padding:3px}
+.seg.seg4 button{font-size:11.5px;letter-spacing:.2px;padding:4px 1px;position:relative;min-width:0}
+.seg.seg4 button.seg-pri{background:#dc2626;color:#fff;border:2px solid #ef4444}
+.seg.seg4 button.seg-pri.on{background:#ef4444;color:#fff;border-color:#fff;box-shadow:0 0 0 2px #ffd400}
+.pri-ic{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#fff;color:#dc2626;font:900 16px/1 "Oxanium",sans-serif;font-style:normal;vertical-align:middle;box-shadow:0 0 0 2px #7f1d1d}
+.seg-pri.on .pri-ic{background:#fff;color:#dc2626}
+.seg.seg4 button i.pri-ic{font-size:16px}
+.prict{position:absolute;top:2px;right:3px;min-width:18px;height:18px;padding:0 4px;border-radius:9px;background:#ffd400;color:#111;font:800 11px/18px "Oxanium",sans-serif;letter-spacing:0}
+.prict[hidden]{display:none}
+.pcard{border-left-color:#ef4444!important}
+.badge.b-pri{background:#dc2626;color:#fff}
+.btn.pri-fab{background:#dc2626;color:#fff;border-color:#dc2626}
