@@ -7,6 +7,7 @@ function safeStore(name){let s=null;try{s=window[name];s.setItem('__ff_t','1');s
 const LS=safeStore('localStorage'),SS=safeStore('sessionStorage');
 'use strict';
 const TYPES=['truck','dump truck','trailer','loader','excavator','dozer','generator','other'];
+const CATS=['Filters','Belts','Hydraulic','Electrical','Hardware','Fluids','Tires','Engine','Other'];
 const STATUSES=['in service','in shop','down'];
 const $=s=>document.querySelector(s), app=$('#app');
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -39,6 +40,24 @@ async function demoApi(path,opt){
   let x;
   if(!d.checklists){d.checklists=[];d.inspections=[];d.equipment.filter(e=>e.is_example).forEach(e=>d.checklists.push({id:nid(),equipment_id:e.id,name:'EXAMPLE – Daily Pre-Op Inspection',items:DEMO_CHECK.slice(),is_example:1,created_at:now,updated_at:now}));demoSave(d);}
   if(path==='/check')return{ok:true};
+  if(!d.loose){d.loose=DEMO_LOOSE.map(p=>({...p,id:nid(),notes:'EXAMPLE part – delete when you add real parts.',photo:null,is_example:1,created_at:now,updated_at:now}));demoSave(d);}
+  if(!d.lists){d.lists={type:TYPES.slice(),category:CATS.slice()};
+    const seen=(k,v)=>{if(v&&!d.lists[k].some(o=>o.toLowerCase()===String(v).toLowerCase()))d.lists[k].push(v);};
+    d.equipment.forEach(e=>seen('type',e.type));(d.loose||[]).forEach(p=>seen('category',p.category));demoSave(d);}
+  {const L=d.lists,has=(k,v)=>L[k].find(o=>o.toLowerCase()===String(v).trim().toLowerCase()),add=(k,v)=>{v=String(v||'').trim();if(v&&!has(k,v)){L[k].push(v);return true;}return false;};
+   const rec=k=>k==='type'?[d.equipment,'type']:[d.loose||[],'category'];
+   if((m==='POST'||m==='PUT')&&/^\/equipment(\/\d+)?$/.test(path))add('type',b.type);
+   if((m==='POST'||m==='PUT')&&/^\/loose(\/\d+)?$/.test(path))add('category',b.category);
+   if(path==='/lists')return{type:L.type.slice(),category:L.category.slice()};
+   if(x=path.match(/^\/lists\/(type|category)(\/usage|\/order)?(?:\?(.*))?$/)){const k=x[1],q=new URLSearchParams(x[3]||''),[arr,col]=rec(k);
+     const uses=v=>arr.filter(r=>r[col]&&r[col].toLowerCase()===String(v).toLowerCase());
+     if(x[2]==='/usage')return{count:uses(q.get('value')||'').length};
+     if(x[2]==='/order'){const vs=(b.values||[]).filter(v=>L[k].includes(v));L[k]=vs.concat(L[k].filter(v=>!vs.includes(v)));demoSave(d);return{ok:true};}
+     if(m==='POST'){const v=String(b.value||'').trim();if(!v)throw new Error('Enter a name');if(!add(k,v))throw new Error(`“${v}” is already in the list`);demoSave(d);return{ok:true};}
+     if(m==='PUT'){const from=b.from,to=String(b.to||'').trim(),i=L[k].indexOf(from);if(i<0)throw new Error('Not found');if(!to)throw new Error('Enter a name');
+       const o=has(k,to),merged=!!(o&&o!==from);if(merged)L[k].splice(i,1);else L[k][i]=to;uses(from).forEach(r=>{r[col]=merged?o:to;r.updated_at=now;});demoSave(d);return{ok:true,merged};}
+     if(m==='DELETE'){const v=q.get('value'),rep=(q.get('replace')||'').trim()||null,i=L[k].findIndex(o=>o.toLowerCase()===String(v).toLowerCase());if(i<0)throw new Error('Not found');
+       L[k].splice(i,1);uses(v).forEach(r=>{r[col]=rep;r.updated_at=now;});if(rep)add(k,rep);demoSave(d);return{ok:true};}}}
   if(x=path.match(/^\/equipment\/(\d+)\/checklists$/)){const id=+x[1];
     if(m==='GET')return d.checklists.filter(c=>c.equipment_id===id).map(c=>{const ins=d.inspections.filter(i=>i.checklist_id===c.id);return{...c,inspection_count:ins.length,last_done:ins.map(i=>i.created_at).sort().pop()||null};}).sort((p,q)=>p.is_example-q.is_example||p.name.localeCompare(q.name));
     if(!b.name)throw new Error('Checklist name is required');const c={id:nid(),equipment_id:id,name:b.name,items:b.items||[],is_example:0,created_at:now,updated_at:now};d.checklists.push(c);demoSave(d);return{id:c.id};}
@@ -67,7 +86,6 @@ async function demoApi(path,opt){
     if(k==='service'){if(!b.date||!b.work_done)throw new Error('Date and work done required');d.service.push(num({...clean(b),id:nid(),equipment_id:id,created_at:now},['meter','cost']));}
     if(k==='parts'){if(!b.name)throw new Error('Part name is required');d.parts.push(num({...clean(b),id:nid(),equipment_id:id,is_example:0,created_at:now,updated_at:now},['qty','reorder_level','price']));}
     demoSave(d);return{id:d.next-1};}
-  if(!d.loose){d.loose=DEMO_LOOSE.map(p=>({...p,id:nid(),notes:'EXAMPLE part – delete when you add real parts.',photo:null,is_example:1,created_at:now,updated_at:now}));demoSave(d);}
   if(path==='/loose'){if(m==='GET')return d.loose.map(p=>({...p,photo:undefined,photo_src:p.photo,has_photo:!!p.photo})).sort((p,q)=>p.is_example-q.is_example||p.name.localeCompare(q.name));
     if(!b.name)throw new Error('Part name is required');const p=num({...clean(b),id:nid(),is_example:0,created_at:now,updated_at:now},['qty','reorder_level']);d.loose.push(p);demoSave(d);return{id:p.id};}
   if(x=path.match(/^\/loose\/(\d+)(\/qty)?$/)){const id=+x[1],i=d.loose.findIndex(p=>p.id===id);if(i<0)throw new Error('Not found');const p=d.loose[i];
@@ -139,9 +157,9 @@ async function list(){
   app.innerHTML=SEG('eq')+`<input class="search" id="q" type="search" placeholder="🔍  Search name, unit #, make, VIN…" value="${esc(state.q)}">
    <div class="chips" id="tc"></div><div class="chips" id="sc"></div><div id="list"><div class="empty">Loading…</div></div>
    <button class="btn primary fab" id="add">＋ Add Equipment</button>`;
-  const chips=(el,arr,key)=>{el.innerHTML=['all',...arr].map(v=>`<button class="chip ${state[key]===v?'on':''}" data-v="${v}">${v==='all'?(key==='type'?'All types':'All status'):v}</button>`).join('');
-    el.onclick=e=>{const b=e.target.closest('.chip');if(!b)return;state[key]=b.dataset.v;chips(el,arr,key);draw();};};
-  chips($('#tc'),TYPES,'type');chips($('#sc'),STATUSES,'status');
+  const chips=(el,arr,key)=>{el.innerHTML=['all',...arr].map(v=>`<button class="chip ${state[key]===v?'on':''}" data-v="${esc(v)}">${v==='all'?(key==='type'?'All types':'All status'):esc(v)}</button>`).join('')+(key==='type'?editChip('type'):'');
+    el.onclick=e=>{if(e.target.closest('[data-edit]'))return listEditor('type',list);const b=e.target.closest('.chip');if(!b)return;state[key]=b.dataset.v;chips(el,key==='type'?LISTS.type:arr,key);draw();};};
+  await loadLists();if(!$('#tc'))return;chips($('#tc'),LISTS.type,'type');chips($('#sc'),STATUSES,'status');
   let qt;$('#q').oninput=e=>{state.q=e.target.value;clearTimeout(qt);qt=setTimeout(draw,150);};
   $('#add').onclick=()=>editForm();
   try{cache=await api('/equipment');}catch(e){$('#list').innerHTML=`<div class="empty">${esc(e.message)}</div>`;return;}
@@ -229,7 +247,7 @@ function editForm(e){
   let photo=e.photo||null;
   modal(`<h2>${isNew?'Add Equipment':'Edit Equipment'}</h2>
    <label>Name *</label><input id="f_name" value="${esc(e.name)}" placeholder="e.g. Blue Service Truck">
-   <div class="row"><div><label>Unit / ID #</label><input id="f_unit" value="${esc(e.unit)}"></div><div><label>Type</label><select id="f_type">${opt(TYPES,e.type)}</select></div></div>
+   <div class="row"><div><label>Unit / ID #</label><input id="f_unit" value="${esc(e.unit)}"></div>${pickField('f_type','Type','type',e.type)}</div>
    <label>Status</label><select id="f_status">${opt(STATUSES,e.status)}</select>
    <div class="row"><div><label>Make</label><input id="f_make" value="${esc(e.make)}"></div><div><label>Model</label><input id="f_model" value="${esc(e.model)}"></div></div>
    <div class="row"><div><label>Year</label><input id="f_year" type="number" inputmode="numeric" value="${esc(e.year)}"></div><div><label>VIN / Serial</label><input id="f_vin" value="${esc(e.vin)}" autocapitalize="characters"></div></div>
@@ -243,7 +261,7 @@ function editForm(e){
   $('#f_photo').onchange=async ev=>{const f=ev.target.files[0];if(!f)return;try{photo=await shrink(f);$('#pv').src=photo;$('#pv').style.display='';$('#rmp').hidden=false;}catch{toast('Could not read photo');}};
   $('#rmp').onclick=()=>{photo=null;$('#pv').style.display='none';$('#rmp').hidden=true;};
   $('#x').onclick=close;
-  $('#s').onclick=async()=>{const b={};['name','unit','type','status','make','model','year','vin','meter','meter_unit','location'].forEach(k=>b[k]=$('#f_'+k).value.trim());b.photo=photo;
+  $('#s').onclick=async()=>{const b={};['name','unit','status','make','model','year','vin','meter','meter_unit','location'].forEach(k=>b[k]=$('#f_'+k).value.trim());b.type=pickVal('f_type');b.photo=photo;
     if(!b.name)return toast('Name is required');
     try{if(isNew){const r=await api('/equipment',{method:'POST',body:b});close();toast('Equipment added');location.hash='#/eq/'+r.id;}
       else{await api('/equipment/'+e.id,{method:'PUT',body:b});close();toast('Saved');detail(e.id);}}catch(x){toast(x.message);}};
@@ -469,7 +487,6 @@ function docSheet(e,d){
   $('#del').onclick=()=>adminConfirm(`Delete “${esc(d.title)}”?`,'This permanently removes the file. This cannot be undone.','Delete',async a=>{await api('/docs/'+d.id,{method:'DELETE',admin:a});toast('Deleted');backToProc(e);});
 }
 // ---------- Shop Parts page (loose parts not tied to a machine) ----------
-const CATS=['Filters','Belts','Hydraulic','Electrical','Hardware','Fluids','Tires','Engine','Other'];
 const SEG=on=>`<div class="seg"><button class="${on==='eq'?'on':''}" onclick="location.hash=''">🚜 Equipment</button><button class="${on==='parts'?'on':''}" onclick="location.hash='#/parts'">🔩 Parts</button></div>`;
 let loose=[],machParts=[];
 async function partsPage(){
@@ -481,8 +498,9 @@ async function partsPage(){
   $('#add').onclick=()=>looseForm();
   let qt;$('#lq').oninput=e=>{state.lq=e.target.value;clearTimeout(qt);qt=setTimeout(drawLoose,150);};
   $('#ls').onclick=e=>{const b=e.target.closest('.chip');if(!b)return;state.lstock=b.dataset.v;drawLoose();};
-  $('#lc').onclick=e=>{const b=e.target.closest('.chip');if(!b)return;state.lcat=b.dataset.v;drawLoose();};
+  $('#lc').onclick=e=>{if(e.target.closest('[data-edit]'))return listEditor('category',partsPage);const b=e.target.closest('.chip');if(!b)return;state.lcat=b.dataset.v;drawLoose();};
   api('/parts').then(p=>{machParts=p;if(state.lq)drawLoose();}).catch(()=>{});
+  await loadLists();
   try{loose=await api('/loose');}catch(e){$('#list').innerHTML=`<div class="empty">${esc(e.message)}</div>`;return;}
   drawLoose();
 }
@@ -490,8 +508,8 @@ const partHit=(p,q)=>[p.name,p.part_number,p.manufacturer,p.supplier,p.bin,p.not
 function drawLoose(){
   if(!$('#lc'))return;
   const q=state.lq.toLowerCase();
-  const cats=[...new Set(loose.map(p=>p.category).filter(Boolean))].sort();
-  $('#lc').innerHTML=['all',...cats].map(v=>`<button class="chip ${state.lcat===v?'on':''}" data-v="${esc(v)}">${v==='all'?'All categories':esc(v)}</button>`).join('');
+  const cats=LISTS.category.slice();loose.forEach(p=>{if(p.category&&!cats.includes(p.category))cats.push(p.category);});
+  $('#lc').innerHTML=['all',...cats].map(v=>`<button class="chip ${state.lcat===v?'on':''}" data-v="${esc(v)}">${v==='all'?'All categories':esc(v)}</button>`).join('')+editChip('category');
   $('#ls').innerHTML=[['all','All stock'],['in','In stock'],['low','Low stock']].map(([v,l])=>`<button class="chip ${state.lstock===v?'on':''}" data-v="${v}">${l}</button>`).join('');
   const rows=loose.filter(p=>(state.lcat==='all'||p.category===state.lcat)&&(state.lstock==='all'||(state.lstock==='low'?isLow(p):!isLow(p)&&Number(p.qty)>0))&&(!q||partHit(p,q)));
   const thumb=p=>p.photo_src?`<img src="${p.photo_src}" alt="">`:p.has_photo?`<img loading="lazy" src="/api/loose/${p.id}/photo?code=${encodeURIComponent(store.code||'')}&v=${encodeURIComponent(p.updated_at)}" alt="">`:'🔩';
@@ -534,7 +552,7 @@ function looseForm(p){
   modal(`<h2>${isNew?'Add Shop Part':'Edit Shop Part'}</h2>
    ${f('name','Part name *','text','placeholder="e.g. V-belt A42"')}
    <div class="row">${f('part_number','Part #')}${f('manufacturer','Brand')}</div>
-   ${f('category','Category','text','list="catlist" placeholder="e.g. Filters"')}<datalist id="catlist">${CATS.map(c=>`<option value="${c}">`).join('')}</datalist>
+   ${pickField('l_category','Category','category',p.category)}
    <div class="row">${f('qty','Qty on hand','number','inputmode="decimal"')}${f('reorder_level','Low at','number','inputmode="decimal"')}</div>
    ${f('bin','Location / bin')}
    ${f('fits','Fits which machines (optional)','text','placeholder="e.g. Loader, excavator"')}
@@ -547,10 +565,46 @@ function looseForm(p){
   $('#l_photo').onchange=async ev=>{const fl=ev.target.files[0];if(!fl)return;try{photo=await shrink(fl);$('#lpv').src=photo;$('#lpv').style.display='';$('#lrm').hidden=false;}catch{toast('Could not read photo');}};
   $('#lrm').onclick=()=>{photo=null;$('#lpv').style.display='none';$('#lrm').hidden=true;};
   $('#x').onclick=isNew?close:()=>looseView(p.id);
-  $('#s').onclick=async()=>{const b={photo};['name','part_number','manufacturer','category','qty','reorder_level','bin','fits','supplier','notes'].forEach(k=>b[k]=$('#l_'+k).value.trim());
+  $('#s').onclick=async()=>{const b={photo};b.category=pickVal('l_category');['name','part_number','manufacturer','qty','reorder_level','bin','fits','supplier','notes'].forEach(k=>b[k]=$('#l_'+k).value.trim());
     if(!b.name)return toast('Part name is required');
     try{if(isNew)await api('/loose',{method:'POST',body:b});else await api('/loose/'+p.id,{method:'PUT',body:b});close();toast(isNew?'Part added':'Part saved');partsPage();}catch(x){toast(x.message);}};
   if(!isNew)$('#del').onclick=()=>adminConfirm(`Delete “${esc(p.name)}”?`,'This permanently removes this shop part. This cannot be undone.','Delete Part',async a=>{await api('/loose/'+p.id,{method:'DELETE',admin:a});close();toast('Part deleted');partsPage();});
+}
+// ---------- Editable lists (equipment types, shop-part categories) ----------
+const LISTS={type:TYPES.slice(),category:CATS.slice()};
+const LNAME={type:['type','types','machine','machines'],category:['category','categories','shop part','shop parts']};
+async function loadLists(){try{const l=await api('/lists');if(l&&l.type)Object.assign(LISTS,l);}catch(e){}}
+const editChip=kind=>`<button class="chip chip-edit" data-edit="${kind}" aria-label="Edit ${LNAME[kind][1]}">✎ Edit</button>`;
+// <select> of the list + "New…" which reveals a text box
+function pickField(id,label,kind,val){const vs=LISTS[kind].slice();if(val&&!vs.some(v=>v.toLowerCase()===String(val).toLowerCase()))vs.push(val);
+  return `<div><label for="${id}">${label}</label><select id="${id}" onchange="document.getElementById('${id}_new').hidden=this.value!=='__new'">
+   ${kind==='category'?`<option value="" ${!val?'selected':''}>— none —</option>`:''}${vs.map(v=>`<option value="${esc(v)}" ${v===val?'selected':''}>${esc(v)}</option>`).join('')}<option value="__new">＋ New ${LNAME[kind][0]}…</option></select>
+   <input id="${id}_new" hidden placeholder="Type a new ${LNAME[kind][0]}" style="margin-top:6px"></div>`;}
+const pickVal=id=>{const s=$('#'+id);return s.value==='__new'?$('#'+id+'_new').value.trim():s.value;};
+async function listEditor(kind,after){
+  await loadLists();const [one,many,thing,things]=LNAME[kind];
+  const draw=()=>{const vs=LISTS[kind];
+    modal(`<h2>Edit ${many}</h2><div class="mini">Rename by typing in a box (saves when you leave it). Renaming updates every ${thing} using it.</div>
+     <div id="lerows">${vs.map((v,i)=>`<div class="lerow"><input class="lein" data-i="${i}" value="${esc(v)}" aria-label="${esc(v)}">
+      <button class="btn lebtn" data-up="${i}" ${i?'':'disabled'} aria-label="Move up">↑</button><button class="btn lebtn" data-dn="${i}" ${i<vs.length-1?'':'disabled'} aria-label="Move down">↓</button>
+      <button class="btn lebtn danger" data-del="${i}" aria-label="Delete ${esc(v)}">🗑</button></div>`).join('')||'<div class="empty">No '+many+' yet.</div>'}</div>
+     <label for="lenew">Add a new ${one}</label><div class="row"><input id="lenew" placeholder="e.g. ${kind==='type'?'skid steer':'Lights'}" style="flex:2"><button class="btn primary" id="leadd">＋ Add</button></div>
+     <button class="btn block" id="x" style="margin-top:16px">Done</button>`);
+    $('#x').onclick=()=>{close();after();};
+    $('#leadd').onclick=async()=>{const v=$('#lenew').value.trim();if(!v)return toast('Type a name first');
+      try{await api('/lists/'+kind,{method:'POST',body:{value:v}});await loadLists();toast('Added');draw();}catch(x){toast(x.message);}};
+    $('#modal').querySelectorAll('.lein').forEach(inp=>inp.onchange=async()=>{const from=vs[+inp.dataset.i],to=inp.value.trim();if(!to||to===from){inp.value=from;return;}
+      try{const r=await api('/lists/'+kind,{method:'PUT',body:{from,to}});await loadLists();toast(r.merged?`Merged into “${to}”`:'Renamed');draw();}catch(x){toast(x.message);inp.value=from;}});
+    const move=async(i,j)=>{const a=vs.slice();[a[i],a[j]]=[a[j],a[i]];try{await api(`/lists/${kind}/order`,{method:'PUT',body:{values:a}});LISTS[kind]=a;draw();}catch(x){toast(x.message);}};
+    $('#modal').querySelectorAll('[data-up]').forEach(b=>b.onclick=()=>move(+b.dataset.up,+b.dataset.up-1));
+    $('#modal').querySelectorAll('[data-dn]').forEach(b=>b.onclick=()=>move(+b.dataset.dn,+b.dataset.dn+1));
+    $('#modal').querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{const v=vs[+b.dataset.del];
+      let n=0;try{n=(await api(`/lists/${kind}/usage?value=`+encodeURIComponent(v))).count;}catch(x){}
+      const repl=kind==='type'?(LISTS.type.find(t=>t.toLowerCase()==='other'&&t.toLowerCase()!==v.toLowerCase())||''):'';
+      const msg=n?`<b>${n} ${n===1?thing:things}</b> use “${esc(v)}”. They’ll be set to ${repl?`“${esc(repl)}”`:'blank (no '+one+')'}.`:`No ${things} use “${esc(v)}”.`;
+      adminConfirm(`Delete “${esc(v)}”?`,msg,'Delete',async a=>{await api(`/lists/${kind}?value=${encodeURIComponent(v)}&replace=${encodeURIComponent(repl)}`,{method:'DELETE',admin:a});
+        if(kind==='type'&&state.type===v)state.type='all';if(kind==='category'&&state.lcat===v)state.lcat='all';await loadLists();toast('Deleted');draw();});});
+  };draw();
 }
 async function credits(){const c=window.FF_CREDITS||await fetch('/photos/credits.json').then(r=>r.json()).catch(()=>({}));
   modal(`<h2>Photo Credits</h2><p class="mini">Photos from Wikimedia Commons, used under their licenses (unmodified except resizing/cropping).</p>${Object.entries(c).map(([k,v])=>`<div class="item"><b style="text-transform:capitalize">${esc(k.replace('-',' '))}</b><div class="mini">${esc(v.author)} · ${esc(v.license)}</div><a href="${esc(v.page)}" target="_blank" rel="noopener" style="color:var(--yellow);word-break:break-all;font-size:14px">${esc(v.page)}</a></div>`).join('')}<button class="btn block" id="x">Close</button>`);$('#x').onclick=close;}

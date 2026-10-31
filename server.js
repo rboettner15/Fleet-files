@@ -86,6 +86,22 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
     save(); fs.writeFileSync(DB_FILE + '.loose-seeded', now());
   }
 
+  // ---- Editable lists (v8): equipment types + shop-part categories. Additive only. ----
+  db.exec(`CREATE TABLE IF NOT EXISTS lists(id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, value TEXT NOT NULL, pos INTEGER DEFAULT 0, created_at TEXT);`);
+  const LISTS = { type: { table: 'equipment', col: 'type', seed: ['truck', 'dump truck', 'trailer', 'loader', 'excavator', 'dozer', 'generator', 'other'] },
+    category: { table: 'loose_parts', col: 'category', seed: ['Filters', 'Belts', 'Hydraulic', 'Electrical', 'Hardware', 'Fluids', 'Tires', 'Engine', 'Other'] } };
+  const listVals = k => all('SELECT value FROM lists WHERE kind=? ORDER BY pos, id', [k]).map(r => r.value);
+  const findVal = (k, v) => get('SELECT * FROM lists WHERE kind=? AND value=? COLLATE NOCASE', [k, v]);
+  const addVal = (k, v) => { v = String(v || '').trim(); if (!v || findVal(k, v)) return false;
+    db.run('INSERT INTO lists(kind,value,pos,created_at) VALUES(?,?,?,?)', [k, v, (get('SELECT MAX(pos) m FROM lists WHERE kind=?', [k]).m ?? -1) + 1, now()]); return true; };
+  if (!fs.existsSync(DB_FILE + '.lists-seeded')) {
+    for (const [k, L] of Object.entries(LISTS)) {
+      for (const v of L.seed) addVal(k, v);
+      for (const r of all(`SELECT DISTINCT ${L.col} v FROM ${L.table} WHERE ${L.col} IS NOT NULL AND TRIM(${L.col})<>''`)) addVal(k, r.v);
+    }
+    save(); fs.writeFileSync(DB_FILE + '.lists-seeded', now());
+  }
+
   const app = express();
   app.use(express.json({ limit: '8mb' }));
   app.use(express.static(path.join(__dirname, 'public'), { setHeaders: (res, p) => { if (p.endsWith('sw.js')) res.set('Cache-Control', 'no-cache'); } }));
@@ -114,11 +130,13 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
   });
   api.post('/equipment', (req, res) => {
     if (!req.body.name) return res.status(400).json({ error: 'Name is required' });
+    addVal('type', req.body.type);
     const id = run(`INSERT INTO equipment(${F},created_at,updated_at) VALUES(${F.map(() => '?')},?,?)`, [...vals(req.body), now(), now()]);
     res.status(201).json({ id });
   });
   api.put('/equipment/:id', (req, res) => {
     if (!req.body.name) return res.status(400).json({ error: 'Name is required' });
+    addVal('type', req.body.type);
     run(`UPDATE equipment SET ${F.map(f => f + '=?')},updated_at=? WHERE id=?`, [...vals(req.body), now(), +req.params.id]);
     res.json({ ok: true });
   });
@@ -172,6 +190,29 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
     res.json({ ok: true });
   });
   api.delete('/parts/:id', (req, res) => { run('DELETE FROM parts_v2 WHERE id=?', [+req.params.id]); res.json({ ok: true }); });
+  // ---- Editable lists ----
+  const kindOk = (req, res, next) => LISTS[req.params.kind] ? next() : res.status(404).json({ error: 'Unknown list' });
+  api.get('/lists', (req, res) => res.json({ type: listVals('type'), category: listVals('category') }));
+  api.get('/lists/:kind/usage', kindOk, (req, res) => { const L = LISTS[req.params.kind];
+    res.json({ count: get(`SELECT COUNT(*) c FROM ${L.table} WHERE ${L.col}=? COLLATE NOCASE`, [String(req.query.value || '')]).c }); });
+  api.post('/lists/:kind', kindOk, (req, res) => { const v = String(req.body.value || '').trim(); if (!v) return res.status(400).json({ error: 'Enter a name' });
+    if (!addVal(req.params.kind, v)) return res.status(400).json({ error: `“${v}” is already in the list` }); save(); res.status(201).json({ ok: true }); });
+  api.put('/lists/:kind', kindOk, (req, res) => { // rename; updates every record using the old value
+    const k = req.params.kind, L = LISTS[k], from = String(req.body.from || ''), to = String(req.body.to || '').trim();
+    const row = findVal(k, from); if (!row) return res.status(404).json({ error: 'Not found' }); if (!to) return res.status(400).json({ error: 'Enter a name' });
+    const other = findVal(k, to);
+    if (other && other.id !== row.id) db.run('DELETE FROM lists WHERE id=?', [row.id]); else db.run('UPDATE lists SET value=? WHERE id=?', [to, row.id]);
+    db.run(`UPDATE ${L.table} SET ${L.col}=?, updated_at=? WHERE ${L.col}=? COLLATE NOCASE`, [other ? other.value : to, now(), from]);
+    save(); res.json({ ok: true, merged: !!(other && other.id !== row.id) }); });
+  api.put('/lists/:kind/order', kindOk, (req, res) => { (Array.isArray(req.body.values) ? req.body.values : []).forEach((v, i) => db.run('UPDATE lists SET pos=? WHERE kind=? AND value=?', [i, req.params.kind, v])); save(); res.json({ ok: true }); });
+  api.delete('/lists/:kind', kindOk, admin, (req, res) => { // records using it are moved to `replace` (or blank)
+    const k = req.params.kind, L = LISTS[k], v = String(req.query.value || ''), rep = String(req.query.replace || '').trim() || null;
+    if (!findVal(k, v)) return res.status(404).json({ error: 'Not found' });
+    if (rep && rep.toLowerCase() === v.toLowerCase()) return res.status(400).json({ error: 'Pick a different replacement' });
+    db.run('DELETE FROM lists WHERE kind=? AND value=? COLLATE NOCASE', [k, v]);
+    db.run(`UPDATE ${L.table} SET ${L.col}=?, updated_at=? WHERE ${L.col}=? COLLATE NOCASE`, [rep, now(), v]);
+    if (rep) addVal(k, rep); save(); res.json({ ok: true }); });
+
   // ---- Loose shop parts ----
   const LF = ['name', 'part_number', 'manufacturer', 'category', 'qty', 'reorder_level', 'bin', 'fits', 'supplier', 'notes', 'photo'];
   const lvals = b => LF.map(f => b[f] === '' || b[f] === undefined ? null : b[f]);
@@ -185,10 +226,12 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
   });
   api.post('/loose', (req, res) => {
     if (!req.body.name) return res.status(400).json({ error: 'Part name is required' });
+    addVal('category', req.body.category);
     res.status(201).json({ id: run(`INSERT INTO loose_parts(${LF},created_at,updated_at) VALUES(${LF.map(() => '?')},?,?)`, [...lvals(req.body), now(), now()]) });
   });
   api.put('/loose/:id', (req, res) => {
     if (!req.body.name) return res.status(400).json({ error: 'Part name is required' });
+    addVal('category', req.body.category);
     run(`UPDATE loose_parts SET ${LF.map(f => f + '=?')},updated_at=? WHERE id=?`, [...lvals(req.body), now(), +req.params.id]); res.json({ ok: true });
   });
   api.post('/loose/:id/qty', (req, res) => {

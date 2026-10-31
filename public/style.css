@@ -114,3 +114,10 @@ body.login-bg .login{padding-top:24vh}
 .qtybox{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 0;padding:8px;background:var(--panel2);border-radius:14px}
 .qtybox>div{text-align:center}.qtybox b{display:block;font:700 36px "Oxanium",sans-serif}.qtybox span{font-size:13px;color:var(--muted);text-transform:uppercase}
 .qbtn{min-width:76px;min-height:64px;font-size:34px;padding:0}
+
+/* v8: editable types / categories */
+.chip.chip-edit{border-style:dashed;border-color:var(--yellow,#ffd000);color:var(--yellow,#ffd000);font-weight:700}
+.lerow{display:flex;gap:6px;align-items:center;margin:8px 0}
+.lerow .lein{flex:1;min-width:0;font-size:16px;margin:0}
+.lerow .lebtn{min-width:44px;min-height:44px;padding:0 10px;margin:0;flex:none}
+.lerow .lebtn:disabled{opacity:.3}
