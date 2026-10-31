@@ -63,6 +63,7 @@ async function demoApi(path,opt){
     if(k==='service'){if(!b.date||!b.work_done)throw new Error('Date and work done required');d.service.push(num({...clean(b),id:nid(),equipment_id:id,created_at:now},['meter','cost']));}
     if(k==='parts'){if(!b.name)throw new Error('Part name is required');d.parts.push(num({...clean(b),id:nid(),equipment_id:id,is_example:0,created_at:now,updated_at:now},['qty','reorder_level','price']));}
     demoSave(d);return{id:d.next-1};}
+  if(path==='/parts'&&m==='GET')return d.parts.map(p=>{const e=d.equipment.find(e=>e.id===p.equipment_id)||{};return{...p,photo:undefined,equipment_name:e.name,equipment_unit:e.unit};}).sort((p,q)=>p.name.localeCompare(q.name));
   if(x=path.match(/^\/parts\/(\d+)$/)){const id=+x[1],i=d.parts.findIndex(p=>p.id===id);if(i<0)throw new Error('Not found');
     if(m==='GET')return d.parts[i];
     if(m==='PUT'){if(!b.name)throw new Error('Part name is required');d.parts[i]=num({...d.parts[i],...clean(b),id,updated_at:now},['qty','reorder_level','price']);demoSave(d);return{ok:true};}
@@ -120,21 +121,23 @@ function route(){
   m?detail(+m[1]):list();
 }
 
-let cache=[];
+let cache=[],allParts=[];
 async function list(){
   header('Fleet Files',false);
-  app.innerHTML=`<input class="search" id="q" type="search" placeholder="🔍  Search name, unit #, make, VIN…" value="${esc(state.q)}">
+  app.innerHTML=`<input class="search" id="q" type="search" placeholder="🔍  Search equipment or parts…" value="${esc(state.q)}">
    <div class="chips" id="tc"></div><div class="chips" id="sc"></div><div id="list"><div class="empty">Loading…</div></div>
    <button class="btn primary fab" id="add">＋ Add Equipment</button>`;
   const chips=(el,arr,key)=>{el.innerHTML=['all',...arr].map(v=>`<button class="chip ${state[key]===v?'on':''}" data-v="${v}">${v==='all'?(key==='type'?'All types':'All status'):v}</button>`).join('');
     el.onclick=e=>{const b=e.target.closest('.chip');if(!b)return;state[key]=b.dataset.v;chips(el,arr,key);draw();};};
   chips($('#tc'),TYPES,'type');chips($('#sc'),STATUSES,'status');
-  $('#q').oninput=e=>{state.q=e.target.value;draw();};
+  let qt;$('#q').oninput=e=>{state.q=e.target.value;clearTimeout(qt);qt=setTimeout(draw,150);};
   $('#add').onclick=()=>editForm();
+  api('/parts').then(p=>{allParts=p;if(state.q)draw();}).catch(()=>{});
   try{cache=await api('/equipment');}catch(e){$('#list').innerHTML=`<div class="empty">${esc(e.message)}</div>`;return;}
   draw();
 }
 function draw(){
+  if(!$('#list'))return;
   const q=state.q.toLowerCase();
   const rows=cache.filter(e=>(state.type==='all'||e.type===state.type)&&(state.status==='all'||e.status===state.status)&&
     (!q||[e.name,e.unit,e.make,e.model,e.vin,e.location,e.type].join(' ').toLowerCase().includes(q)));
@@ -146,6 +149,14 @@ function draw(){
      <div class="sub"><span class="badge b-${sc(e.status)}">${esc(e.status)}</span>${e.is_example?'<span class="badge b-ex">Example</span>':''}${e.low_parts?`<span class="badge b-low">${e.low_parts} low part${e.low_parts>1?'s':''}</span>`:''}</div>
      <div class="sub">🔧 Last service: ${fmtDate(e.last_service)}</div></div></button>`).join('')
    :`<div class="empty">${cache.length?'No equipment matches.':'No equipment yet. Tap “Add Equipment”.'}</div>`;
+  if(!q)return;
+  const pr=allParts.filter(p=>[p.name,p.part_number,p.manufacturer,p.supplier,p.bin,p.notes].join(' ').toLowerCase().includes(q)).slice(0,50);
+  $('#list').insertAdjacentHTML('beforeend',`<div class="sec-h" style="margin-top:18px">🔩 Parts (${pr.length})</div>`+(pr.length?pr.map(p=>`
+   <button class="pcard sp ${isLow(p)?'low':''}" data-id="${p.id}" data-eq="${p.equipment_id}"><div class="main"><div class="name">${esc(p.name)}</div>
+    <div class="sub">${p.part_number?'#'+esc(p.part_number):'No part #'}${p.manufacturer?' · '+esc(p.manufacturer):''}</div>
+    <div class="sub">🚜 ${esc(p.equipment_name||'')}${p.equipment_unit?' · #'+esc(p.equipment_unit):''}</div></div>
+    <div class="qty"><b>${p.qty??'–'}</b><span>on hand</span>${isLow(p)?'<em>LOW</em>':''}</div></button>`).join(''):'<div class="empty" style="padding:12px">No parts match.</div>'));
+  $('#list').querySelectorAll('.sp').forEach(b=>b.onclick=()=>{state.tab='parts';state.pq='';state.hl=+b.dataset.id;location.hash='#/eq/'+b.dataset.eq;});
 }
 
 async function detail(id){
@@ -293,6 +304,7 @@ async function partsTab(e){
     $('#pl').querySelectorAll('.pcard').forEach(b=>b.onclick=()=>partView(e,+b.dataset.id));};
   $('#pq').oninput=ev=>{state.pq=ev.target.value;drawP();};
   drawP();
+  if(state.hl){const el=$(`#pl .pcard[data-id="${state.hl}"]`);state.hl=null;if(el){el.classList.add('hl');el.scrollIntoView({block:'center'});setTimeout(()=>el.classList.remove('hl'),2600);}}
 }
 async function partView(e,id){
   let p;try{p=await api('/parts/'+id);}catch(x){return toast(x.message);}

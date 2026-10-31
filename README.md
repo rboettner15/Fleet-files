@@ -28,7 +28,7 @@ Five equipment items named `EXAMPLE – …` are seeded once on first start. Del
 ## API (all need header `x-access-code`)
 `GET/POST /api/equipment`, `GET/PUT /api/equipment/:id`, `DELETE /api/equipment/:id` (+ `x-admin-code`),
 `GET/POST /api/equipment/:id/notes`, `GET/POST /api/equipment/:id/service`, `GET /api/equipment/:id/photo`.
-`PUT /api/equipment/:id/photo` (`{photo: dataURL|null}`), `GET/POST /api/equipment/:id/parts`, `GET/PUT/DELETE /api/parts/:id`, `GET /api/parts/:id/photo`.
+`PUT /api/equipment/:id/photo` (`{photo: dataURL|null}`), `GET /api/parts` (all parts with their machine name/unit, used by the main search bar, which finds equipment and parts), `GET/POST /api/equipment/:id/parts`, `GET/PUT/DELETE /api/parts/:id`, `GET /api/parts/:id/photo`.
 Parts fields: name, part_number, manufacturer, qty, reorder_level (LOW when qty ≤ reorder_level), bin, supplier, price, url, notes, photo. EXAMPLE parts are seeded once.
 
 ## Procedures tab (v4)

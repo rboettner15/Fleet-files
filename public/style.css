@@ -104,3 +104,5 @@ body.login-bg .login{padding-top:24vh}
 .insp-sum.good{background:#14532d;color:#bbf7d0}.insp-sum.bad{background:#7f1d1d;color:#fecaca}
 .ires{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line)}
 .ires .pf{flex:none;width:72px;font-weight:800;font-size:14px}.ires.pass .pf{color:var(--green)}.ires.fail .pf{color:var(--red)}.ires.skip .pf{color:var(--muted)}
+/* v6 part search */
+.pcard.hl{outline:3px solid var(--yellow);box-shadow:0 0 0 6px rgba(245,179,1,.25)}

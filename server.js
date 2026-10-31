@@ -138,6 +138,9 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
   const pvals = b => PF.map(f => b[f] === '' || b[f] === undefined ? null : b[f]);
   const okUrl = u => !u || /^https?:\/\//i.test(u);
   api.get('/equipment/:id/parts', (req, res) => res.json(all(`SELECT id,equipment_id,${PF.filter(f => f !== 'photo')},is_example,updated_at,(photo IS NOT NULL AND photo<>'') has_photo FROM parts_v2 WHERE equipment_id=? ORDER BY name COLLATE NOCASE`, [+req.params.id])));
+  // all parts (no photos) with their machine, for the main search
+  api.get('/parts', (req, res) => res.json(all(`SELECT p.id,p.equipment_id,${PF.filter(f => f !== 'photo').map(f => 'p.' + f)},p.is_example,e.name equipment_name,e.unit equipment_unit
+    FROM parts_v2 p JOIN equipment e ON e.id=p.equipment_id ORDER BY p.name COLLATE NOCASE`)));
   api.get('/parts/:id', (req, res) => { const p = get('SELECT * FROM parts_v2 WHERE id=?', [+req.params.id]); p ? res.json(p) : res.status(404).json({ error: 'Not found' }); });
   api.get('/parts/:id/photo', (req, res) => {
     const r = get('SELECT photo FROM parts_v2 WHERE id=?', [+req.params.id]);
