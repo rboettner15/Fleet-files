@@ -1,0 +1,74 @@
+{
+ "hero": {
+  "title": "Excavator and mountains.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Excavator_and_mountains.jpg",
+  "author": "Tiia Monto",
+  "license": "CC BY-SA 3.0",
+  "license_url": "https://creativecommons.org/licenses/by-sa/3.0",
+  "credit": "Own work"
+ },
+ "excavator": {
+  "title": "Excavating in Soldotna.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Excavating_in_Soldotna.jpg",
+  "author": "Isaac Wedin",
+  "license": "CC BY 2.0",
+  "license_url": "https://creativecommons.org/licenses/by/2.0",
+  "credit": "Flickr: Excavating in Soldotna"
+ },
+ "loader": {
+  "title": "Komatsu WA500 wheel loader for gravel mining.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Komatsu_WA500_wheel_loader_for_gravel_mining.jpg",
+  "author": "Syced",
+  "license": "CC0",
+  "license_url": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+  "credit": "Own work"
+ },
+ "dozer": {
+  "title": "Bulldozer Snow Clearance Shinko La Lungnak Jun24 A7CR 00326.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Bulldozer_Snow_Clearance_Shinko_La_Lungnak_Jun24_A7CR_00326.jpg",
+  "author": "Timothy A. Gonsalves",
+  "license": "CC BY-SA 4.0",
+  "license_url": "https://creativecommons.org/licenses/by-sa/4.0",
+  "credit": "Own work"
+ },
+ "dump-truck": {
+  "title": "Articulated hauler.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Articulated_hauler.jpg",
+  "author": "Wikideas1",
+  "license": "CC0",
+  "license_url": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+  "credit": "Own work"
+ },
+ "truck": {
+  "title": "Ford F-150 Pickup Truck in the Wyoming Mountains.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Ford_F-150_Pickup_Truck_in_the_Wyoming_Mountains.jpg",
+  "author": "Tony Webster",
+  "license": "CC BY 2.0",
+  "license_url": "https://creativecommons.org/licenses/by/2.0",
+  "credit": "Ford F-150 Pickup Truck in the Wyoming Mountains"
+ },
+ "trailer": {
+  "title": "Heavy Equipment- Bulldozer - 52358097054.jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Heavy_Equipment-_Bulldozer_-_52358097054.jpg",
+  "author": "BLM Oregon & Washington",
+  "license": "CC BY 2.0",
+  "license_url": "https://creativecommons.org/licenses/by/2.0",
+  "credit": "https://www.flickr.com/photos/50169152@N06/52358097054/"
+ },
+ "generator": {
+  "title": "Caterpillar Diesel Generators.JPG",
+  "page": "https://commons.wikimedia.org/wiki/File:Caterpillar_Diesel_Generators.JPG",
+  "author": "Bryansfiles",
+  "license": "CC BY-SA 3.0",
+  "license_url": "https://creativecommons.org/licenses/by-sa/3.0",
+  "credit": "Own work"
+ },
+ "other": {
+  "title": "Ashland Emergency Ramp Construction (51845828325).jpg",
+  "page": "https://commons.wikimedia.org/wiki/File:Ashland_Emergency_Ramp_Construction_(51845828325).jpg",
+  "author": "Oregon Department of Transportation",
+  "license": "CC BY 2.0",
+  "license_url": "https://creativecommons.org/licenses/by/2.0",
+  "credit": "Ashland Emergency Ramp Construction"
+ }
+}

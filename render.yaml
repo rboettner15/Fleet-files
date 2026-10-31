@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: fleet-files
+    runtime: docker
+    plan: starter
+    region: oregon
+    autoDeploy: true
+    healthCheckPath: /manifest.webmanifest
+    disk:
+      name: fleet-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: DATA_DIR
+        value: /var/data
+      - key: FLEET_ACCESS_CODE
+        sync: false
+      - key: FLEET_ADMIN_CODE
+        sync: false

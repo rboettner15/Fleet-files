@@ -1,0 +1,9 @@
+node_modules
+data
+*.log
+*.pid
+screenshots
+test
+demo/.static.html
+DEPLOY_CODES.txt
+.git
