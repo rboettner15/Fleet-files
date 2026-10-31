@@ -139,3 +139,16 @@ body.login-bg .login{padding-top:24vh}
 .badge.b-td{background:#2c323b;color:var(--text);border:1px solid var(--line)}
 .due{font-size:14px;color:var(--muted);margin-left:4px}.due.late{color:var(--red);font-weight:700}
 .eqlink{margin-top:6px;min-height:36px;padding:4px 10px;border-radius:10px;border:1px solid var(--line);background:#16191d;color:var(--yellow);font:600 14px inherit;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ---- v11 People & Permissions ---- */
+[data-perm][hidden]{display:none!important}
+.person{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:12px;margin:8px 0}
+.person .pmain{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.person .pmain .mini{width:100%;margin:0}
+.person select{margin-top:8px}.person .pbtns{margin-top:8px}.person .pbtns .btn{min-height:44px;font-size:15px}
+.b-owner{background:#ffd400;color:#111}
+.toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid rgba(255,255,255,.1);font-size:16px;cursor:pointer;min-height:48px}
+.toggle input{position:absolute;opacity:0;width:1px;height:1px}
+.toggle i{flex:none;width:52px;height:30px;border-radius:15px;background:#555;position:relative;transition:.2s}
+.toggle i:after{content:'';position:absolute;left:3px;top:3px;width:24px;height:24px;border-radius:50%;background:#fff;transition:.2s}
+.toggle input:checked+i{background:#ffd400}.toggle input:checked+i:after{left:25px}
+.sec-h{font-weight:700;color:#ffd400;margin-top:14px;font-size:17px}

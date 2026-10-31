@@ -6,7 +6,7 @@ const initSqlJs = require('sql.js');
 
 const PORT = process.env.PORT || 8080;
 const ACCESS_CODE = process.env.FLEET_ACCESS_CODE || 'fleet2026';
-const ADMIN_CODE = process.env.FLEET_ADMIN_CODE || 'admin-anchorpoint';
+// FLEET_ADMIN_CODE is no longer used (v11): deletes are allowed by the signed-in person's role.
 const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.join(__dirname, 'data'), 'fleet.db');
 
 (async () => {
@@ -125,16 +125,83 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
     save(); fs.writeFileSync(DB_FILE + '.lists3-seeded', now());
   }
 
+  // ---- People & permissions (v11). Additive tables only. ----
+  const crypto = require('crypto');
+  db.exec(`CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, pin_salt TEXT, pin_hash TEXT, role TEXT NOT NULL DEFAULT 'member', is_owner INTEGER DEFAULT 0, created_at TEXT, updated_at TEXT);
+    CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL, created_at TEXT, last_seen TEXT);
+    CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);`);
+  // Owner PIN: FLEET_OWNER_PIN, else falls back to the old shared access code so the owner is never locked out after deploy.
+  const OWNER_PIN = String(process.env.FLEET_OWNER_PIN || ACCESS_CODE);
+  const PERMS = { eq_add: 'Add equipment', eq_delete: 'Delete equipment', parts_add: 'Add parts (shop + machine)', parts_delete: 'Delete parts (shop + machine)',
+    todo_add: 'Add to-dos', todo_delete: 'Delete to-dos', records_add: 'Add notes, service records, checklists, inspections & manuals',
+    records_delete: 'Delete notes, service records, checklists, inspections & manuals', lists_edit: 'Edit chip lists (types, categories, status…)' };
+  const MEMBER_DEFAULTS = { eq_add: false, eq_delete: false, parts_add: true, parts_delete: true, todo_add: false, todo_delete: false, records_add: true, records_delete: false, lists_edit: false };
+  const memberPerms = () => { let s = {}; try { s = JSON.parse((get("SELECT value FROM settings WHERE key='member_perms'") || {}).value || '{}'); } catch (e) {}
+    return Object.fromEntries(Object.keys(PERMS).map(k => [k, typeof s[k] === 'boolean' ? s[k] : MEMBER_DEFAULTS[k]])); };
+  const permsFor = u => u.role === 'admin' ? Object.fromEntries(Object.keys(PERMS).map(k => [k, true])) : memberPerms();
+  const sha = s => crypto.createHash('sha256').update(String(s)).digest('hex');
+  const hashPin = (pin, salt) => crypto.scryptSync(String(pin), salt, 32).toString('hex');
+  const same = (a, b) => { const x = Buffer.from(sha(a)), y = Buffer.from(sha(b)); return crypto.timingSafeEqual(x, y); };
+  const pinOk = p => /^\d{4,8}$/.test(String(p || ''));
+  const pub = u => ({ id: u.id, name: u.name, role: u.role, is_owner: !!u.is_owner, created_at: u.created_at });
+  const admins = () => get("SELECT COUNT(*) c FROM users WHERE role='admin'").c;
+  const fails = new Map(); // simple brute-force guard: 8 wrong tries per IP+name per 15 min
+  const tooMany = ip => { const f = fails.get(ip); return f && f.n >= 8 && Date.now() - f.t < 15 * 60e3; };
+  const fail = ip => { const f = fails.get(ip); fails.set(ip, f && Date.now() - f.t < 15 * 60e3 ? { n: f.n + 1, t: f.t } : { n: 1, t: Date.now() }); };
+  const newSession = u => { const tok = crypto.randomBytes(32).toString('hex'); db.run('INSERT INTO sessions(token_hash,user_id,created_at,last_seen) VALUES(?,?,?,?)', [sha(tok), u.id, now(), now()]); save(); return tok; };
+
   const app = express();
+  app.set('trust proxy', 1); // Render sits behind one proxy: real phone IP for the wrong-PIN limit
   app.use(express.json({ limit: '8mb' }));
   app.use(express.static(path.join(__dirname, 'public'), { setHeaders: (res, p) => { if (p.endsWith('sw.js')) res.set('Cache-Control', 'no-cache'); } }));
 
-  const auth = (req, res, next) => (req.get('x-access-code') || req.query.code) === ACCESS_CODE ? next() : res.status(401).json({ error: 'Invalid access code' });
-  const admin = (req, res, next) => req.get('x-admin-code') === ADMIN_CODE ? next() : res.status(403).json({ error: 'Admin code required' });
+  // sign in: name + PIN -> session token kept on the phone (sent as x-session, or ?t= for photo/file links)
+  app.post('/api/login', (req, res) => {
+    const name = String(req.body.name || '').trim(), ip = req.ip + '|' + name.toLowerCase(), pin = String(req.body.pin || '').trim();
+    if (tooMany(ip)) return res.status(429).json({ error: 'Too many wrong tries. Wait 15 minutes.' });
+    if (!name || !pin) return res.status(400).json({ error: 'Enter your name and PIN' });
+    let u = null;
+    if (same(pin, OWNER_PIN)) { u = get('SELECT * FROM users WHERE is_owner=1');
+      if (!u) { const id = run("INSERT INTO users(name,role,is_owner,created_at,updated_at) VALUES(?,'admin',1,?,?)", [name, now(), now()]); u = get('SELECT * FROM users WHERE id=?', [id]); } }
+    else { const c = get('SELECT * FROM users WHERE name=? COLLATE NOCASE AND is_owner=0', [name]); if (c && c.pin_hash && same(hashPin(pin, c.pin_salt), c.pin_hash)) u = c; }
+    if (!u) { fail(ip); return res.status(401).json({ error: 'Name or PIN is not right' }); }
+    fails.delete(ip); res.json({ token: newSession(u), user: pub(u), perms: permsFor(u) });
+  });
+  const auth = (req, res, next) => { const t = req.get('x-session') || req.query.t;
+    const s = t && get('SELECT * FROM sessions WHERE token_hash=?', [sha(t)]); const u = s && get('SELECT * FROM users WHERE id=?', [s.user_id]);
+    if (!u) return res.status(401).json({ error: 'Please sign in' });
+    req.user = u; req.perms = permsFor(u); req.tokenHash = s.token_hash; next(); };
+  const need = p => (req, res, next) => req.perms[p] ? next() : res.status(403).json({ error: 'You don’t have permission to do that. Ask an admin.' });
+  const adminOnly = (req, res, next) => req.user.role === 'admin' ? next() : res.status(403).json({ error: 'Admins only' });
   const api = express.Router(); api.use(auth);
 
   api.get('/check', (req, res) => res.json({ ok: true }));
-  api.post('/admin-check', admin, (req, res) => res.json({ ok: true }));
+  api.get('/me', (req, res) => res.json({ user: pub(req.user), perms: req.perms, labels: PERMS }));
+  api.post('/logout', (req, res) => { db.run('DELETE FROM sessions WHERE token_hash=?', [req.tokenHash]); save(); res.json({ ok: true }); });
+  // People (admins only)
+  api.get('/people', adminOnly, (req, res) => res.json({ people: all('SELECT * FROM users ORDER BY is_owner DESC, name COLLATE NOCASE').map(pub), member_perms: memberPerms(), labels: PERMS }));
+  api.post('/people', adminOnly, (req, res) => { const name = String(req.body.name || '').trim(), pin = String(req.body.pin || '').trim(), role = req.body.role === 'admin' ? 'admin' : 'member';
+    if (!name) return res.status(400).json({ error: 'Enter a name' }); if (!pinOk(pin)) return res.status(400).json({ error: 'PIN must be 4–8 digits' });
+    if (get('SELECT id FROM users WHERE name=? COLLATE NOCASE', [name])) return res.status(400).json({ error: 'Someone already has that name' });
+    const salt = crypto.randomBytes(16).toString('hex');
+    res.status(201).json({ id: run('INSERT INTO users(name,pin_salt,pin_hash,role,created_at,updated_at) VALUES(?,?,?,?,?,?)', [name, salt, hashPin(pin, salt), role, now(), now()]) }); });
+  api.put('/people/:id', adminOnly, (req, res) => { const u = get('SELECT * FROM users WHERE id=?', [+req.params.id]); if (!u) return res.status(404).json({ error: 'Not found' });
+    const b = req.body;
+    if (b.role && b.role !== u.role) { if (u.is_owner) return res.status(400).json({ error: 'The owner is always an admin' });
+      if (u.role === 'admin' && admins() <= 1) return res.status(400).json({ error: 'You need at least one admin' });
+      run('UPDATE users SET role=?,updated_at=? WHERE id=?', [b.role === 'admin' ? 'admin' : 'member', now(), u.id]); }
+    if (b.pin !== undefined) { if (u.is_owner) return res.status(400).json({ error: 'The owner PIN is set on the server (FLEET_OWNER_PIN)' });
+      if (!pinOk(b.pin)) return res.status(400).json({ error: 'PIN must be 4–8 digits' });
+      const salt = crypto.randomBytes(16).toString('hex'); db.run('DELETE FROM sessions WHERE user_id=?', [u.id]); run('UPDATE users SET pin_salt=?,pin_hash=?,updated_at=? WHERE id=?', [salt, hashPin(b.pin, salt), now(), u.id]); }
+    if (b.name && String(b.name).trim() !== u.name) { const n = String(b.name).trim(); if (get('SELECT id FROM users WHERE name=? COLLATE NOCASE AND id<>?', [n, u.id])) return res.status(400).json({ error: 'Someone already has that name' });
+      run('UPDATE users SET name=?,updated_at=? WHERE id=?', [n, now(), u.id]); }
+    res.json({ ok: true }); });
+  api.delete('/people/:id', adminOnly, (req, res) => { const u = get('SELECT * FROM users WHERE id=?', [+req.params.id]); if (!u) return res.status(404).json({ error: 'Not found' });
+    if (u.is_owner) return res.status(400).json({ error: 'The owner can’t be removed' });
+    if (u.role === 'admin' && admins() <= 1) return res.status(400).json({ error: 'You need at least one admin' });
+    db.run('DELETE FROM sessions WHERE user_id=?', [u.id]); run('DELETE FROM users WHERE id=?', [u.id]); res.json({ ok: true }); });
+  api.put('/permissions', adminOnly, (req, res) => { const cur = memberPerms(); for (const k of Object.keys(PERMS)) if (typeof req.body[k] === 'boolean') cur[k] = req.body[k];
+    db.run("INSERT INTO settings(key,value) VALUES('member_perms',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [JSON.stringify(cur)]); save(); res.json({ member_perms: cur }); });
   const LIST = `SELECT e.id,e.name,e.unit,e.type,e.make,e.model,e.year,e.vin,e.meter,e.meter_unit,e.status,e.location,e.is_example,e.updated_at,
     (e.photo IS NOT NULL AND e.photo<>'') has_photo, (SELECT MAX(date) FROM service_records s WHERE s.equipment_id=e.id) last_service,
     (SELECT COUNT(*) FROM notes n WHERE n.equipment_id=e.id) note_count, (SELECT COUNT(*) FROM parts_v2 p WHERE p.equipment_id=e.id AND p.qty IS NOT NULL AND p.reorder_level IS NOT NULL AND p.qty<=p.reorder_level) low_parts FROM equipment e`;
@@ -151,7 +218,7 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
     if (!m) return res.status(404).end();
     res.set('Content-Type', m[1]).set('Cache-Control', 'private, max-age=60').send(Buffer.from(m[2], 'base64'));
   });
-  api.post('/equipment', (req, res) => {
+  api.post('/equipment', need('eq_add'), (req, res) => {
     if (!req.body.name) return res.status(400).json({ error: 'Name is required' });
     addVal('type', req.body.type); addVal('status', req.body.status);
     const id = run(`INSERT INTO equipment(${F},created_at,updated_at) VALUES(${F.map(() => '?')},?,?)`, [...vals(req.body), now(), now()]);
@@ -163,7 +230,7 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
     run(`UPDATE equipment SET ${F.map(f => f + '=?')},updated_at=? WHERE id=?`, [...vals(req.body), now(), +req.params.id]);
     res.json({ ok: true });
   });
-  api.delete('/equipment/:id', admin, (req, res) => {
+  api.delete('/equipment/:id', need('eq_delete'), (req, res) => {
     const docs = all('SELECT stored_name FROM documents WHERE equipment_id=?', [+req.params.id]);
     run('DELETE FROM equipment WHERE id=?', [+req.params.id]);
     run('UPDATE todos SET equipment_id=NULL WHERE equipment_id=?', [+req.params.id]); // keep the to-dos, just unlink
@@ -172,21 +239,21 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
   });
 
   api.get('/equipment/:id/notes', (req, res) => res.json(all('SELECT * FROM notes WHERE equipment_id=? ORDER BY created_at DESC, id DESC', [+req.params.id])));
-  api.post('/equipment/:id/notes', (req, res) => {
-    const { author, body } = req.body;
+  api.post('/equipment/:id/notes', need('records_add'), (req, res) => {
+    const author = req.user.name, { body } = req.body;
     if (!author || !body) return res.status(400).json({ error: 'Name and note text required' });
     res.status(201).json({ id: run('INSERT INTO notes(equipment_id,author,body,created_at) VALUES(?,?,?,?)', [+req.params.id, author, body, now()]) });
   });
-  api.delete('/notes/:id', admin, (req, res) => { run('DELETE FROM notes WHERE id=?', [+req.params.id]); res.json({ ok: true }); });
+  api.delete('/notes/:id', need('records_delete'), (req, res) => { run('DELETE FROM notes WHERE id=?', [+req.params.id]); res.json({ ok: true }); });
 
   api.get('/equipment/:id/service', (req, res) => res.json(all('SELECT * FROM service_records WHERE equipment_id=? ORDER BY date DESC, id DESC', [+req.params.id])));
-  api.post('/equipment/:id/service', (req, res) => {
+  api.post('/equipment/:id/service', need('records_add'), (req, res) => {
     const b = req.body;
     if (!b.date || !b.work_done) return res.status(400).json({ error: 'Date and work done required' });
     res.status(201).json({ id: run('INSERT INTO service_records(equipment_id,date,meter,work_done,parts_used,cost,performed_by,created_at) VALUES(?,?,?,?,?,?,?,?)',
       [+req.params.id, b.date, b.meter || null, b.work_done, b.parts_used || null, b.cost || null, b.performed_by || null, now()]) });
   });
-  api.delete('/service/:id', admin, (req, res) => { run('DELETE FROM service_records WHERE id=?', [+req.params.id]); res.json({ ok: true }); });
+  api.delete('/service/:id', need('records_delete'), (req, res) => { run('DELETE FROM service_records WHERE id=?', [+req.params.id]); res.json({ ok: true }); });
 
   const PF = ['name', 'part_number', 'manufacturer', 'qty', 'reorder_level', 'bin', 'supplier', 'price', 'url', 'notes', 'photo'];
   const pvals = b => PF.map(f => b[f] === '' || b[f] === undefined ? null : b[f]);
@@ -202,7 +269,7 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
     if (!m) return res.status(404).end();
     res.set('Content-Type', m[1]).set('Cache-Control', 'private, max-age=60').send(Buffer.from(m[2], 'base64'));
   });
-  api.post('/equipment/:id/parts', (req, res) => {
+  api.post('/equipment/:id/parts', need('parts_add'), (req, res) => {
     if (!req.body.name) return res.status(400).json({ error: 'Part name is required' });
     if (!okUrl(req.body.url)) return res.status(400).json({ error: 'Link must start with http:// or https://' });
     res.status(201).json({ id: run(`INSERT INTO parts_v2(equipment_id,${PF},created_at,updated_at) VALUES(?,${PF.map(() => '?')},?,?)`, [+req.params.id, ...pvals(req.body), now(), now()]) });
@@ -213,7 +280,7 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
     run(`UPDATE parts_v2 SET ${PF.map(f => f + '=?')},updated_at=? WHERE id=?`, [...pvals(req.body), now(), +req.params.id]);
     res.json({ ok: true });
   });
-  api.delete('/parts/:id', (req, res) => { run('DELETE FROM parts_v2 WHERE id=?', [+req.params.id]); res.json({ ok: true }); });
+  api.delete('/parts/:id', need('parts_delete'), (req, res) => { run('DELETE FROM parts_v2 WHERE id=?', [+req.params.id]); res.json({ ok: true }); });
   // ---- Editable lists ----
   const kindOk = (req, res, next) => LISTS[req.params.kind] ? next() : res.status(404).json({ error: 'Unknown list' });
   api.get('/lists', (req, res) => { const roles = {};
@@ -221,17 +288,17 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
     res.json({ type: listVals('type'), category: listVals('category'), status: listVals('status'), stock: listVals('stock'), todo_status: listVals('todo_status'), priority: listVals('priority'), roles }); });
   api.get('/lists/:kind/usage', kindOk, (req, res) => { const L = LISTS[req.params.kind];
     res.json({ count: get(`SELECT COUNT(*) c FROM ${L.table} WHERE ${L.col}=? COLLATE NOCASE`, [String(req.query.value || '')]).c }); });
-  api.post('/lists/:kind', kindOk, (req, res) => { const v = String(req.body.value || '').trim(); if (!v) return res.status(400).json({ error: 'Enter a name' });
+  api.post('/lists/:kind', kindOk, need('lists_edit'), (req, res) => { const v = String(req.body.value || '').trim(); if (!v) return res.status(400).json({ error: 'Enter a name' });
     if (!addVal(req.params.kind, v)) return res.status(400).json({ error: `“${v}” is already in the list` }); save(); res.status(201).json({ ok: true }); });
-  api.put('/lists/:kind', kindOk, (req, res) => { // rename; updates every record using the old value
+  api.put('/lists/:kind', kindOk, need('lists_edit'), (req, res) => { // rename; updates every record using the old value
     const k = req.params.kind, L = LISTS[k], from = String(req.body.from || ''), to = String(req.body.to || '').trim();
     const row = findVal(k, from); if (!row) return res.status(404).json({ error: 'Not found' }); if (!to) return res.status(400).json({ error: 'Enter a name' });
     const other = findVal(k, to);
     if (other && other.id !== row.id) db.run('DELETE FROM lists WHERE id=?', [row.id]); else db.run('UPDATE lists SET value=? WHERE id=?', [to, row.id]);
     db.run(`UPDATE ${L.table} SET ${L.col}=?, updated_at=? WHERE ${L.col}=? COLLATE NOCASE`, [other ? other.value : to, now(), from]);
     save(); res.json({ ok: true, merged: !!(other && other.id !== row.id) }); });
-  api.put('/lists/:kind/order', kindOk, (req, res) => { (Array.isArray(req.body.values) ? req.body.values : []).forEach((v, i) => db.run('UPDATE lists SET pos=? WHERE kind=? AND value=?', [i, req.params.kind, v])); save(); res.json({ ok: true }); });
-  api.delete('/lists/:kind', kindOk, admin, (req, res) => { // records using it are moved to `replace` (or blank)
+  api.put('/lists/:kind/order', kindOk, need('lists_edit'), (req, res) => { (Array.isArray(req.body.values) ? req.body.values : []).forEach((v, i) => db.run('UPDATE lists SET pos=? WHERE kind=? AND value=?', [i, req.params.kind, v])); save(); res.json({ ok: true }); });
+  api.delete('/lists/:kind', kindOk, need('lists_edit'), (req, res) => { // records using it are moved to `replace` (or blank)
     const k = req.params.kind, L = LISTS[k], v = String(req.query.value || '');
     if (!findVal(k, v)) return res.status(404).json({ error: 'Not found' });
     let rep = String(req.query.replace || '').trim() || null;
@@ -252,16 +319,16 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
   const doneAt = (s, prev) => (roleOf('todo_status', 'done') || '').toLowerCase() === s.toLowerCase() ? (prev || now()) : null;
   api.get('/todos', (req, res) => res.json(all(TQ + ' ORDER BY t.created_at DESC')));
   api.get('/todos/:id', (req, res) => { const t = get(TQ + ' WHERE t.id=?', [+req.params.id]); t ? res.json(t) : res.status(404).json({ error: 'Not found' }); });
-  api.post('/todos', (req, res) => { const v = tvals(req.body); if (!v.title) return res.status(400).json({ error: 'Title is required' });
+  api.post('/todos', need('todo_add'), (req, res) => { const v = tvals(req.body); if (!v.title) return res.status(400).json({ error: 'Title is required' });
     res.status(201).json({ id: run('INSERT INTO todos(title,notes,status,priority,equipment_id,due_date,author,done_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)',
-      [v.title, v.notes, v.status, v.priority, v.equipment_id, v.due_date, String(req.body.author || '').trim() || null, doneAt(v.status), now(), now()]) }); });
+      [v.title, v.notes, v.status, v.priority, v.equipment_id, v.due_date, req.user.name, doneAt(v.status), now(), now()]) }); });
   api.put('/todos/:id', (req, res) => { const t = get('SELECT * FROM todos WHERE id=?', [+req.params.id]); if (!t) return res.status(404).json({ error: 'Not found' });
     const v = tvals(req.body); if (!v.title) return res.status(400).json({ error: 'Title is required' });
     run('UPDATE todos SET title=?,notes=?,status=?,priority=?,equipment_id=?,due_date=?,done_at=?,updated_at=? WHERE id=?', [v.title, v.notes, v.status, v.priority, v.equipment_id, v.due_date, doneAt(v.status, t.done_at), now(), t.id]); res.json({ ok: true }); });
   api.put('/todos/:id/done', (req, res) => { const t = get('SELECT * FROM todos WHERE id=?', [+req.params.id]); if (!t) return res.status(404).json({ error: 'Not found' });
     const s = req.body.done ? (roleOf('todo_status', 'done') || 'Done') : (roleOf('todo_status', 'open') || listVals('todo_status')[0] || 'Open'); addVal('todo_status', s);
     run('UPDATE todos SET status=?,done_at=?,updated_at=? WHERE id=?', [s, req.body.done ? now() : null, now(), t.id]); res.json({ ok: true, status: s }); });
-  api.delete('/todos/:id', admin, (req, res) => { run('DELETE FROM todos WHERE id=?', [+req.params.id]); res.json({ ok: true }); });
+  api.delete('/todos/:id', need('todo_delete'), (req, res) => { run('DELETE FROM todos WHERE id=?', [+req.params.id]); res.json({ ok: true }); });
 
   // ---- Loose shop parts ----
   const LF = ['name', 'part_number', 'manufacturer', 'category', 'stock', 'qty', 'reorder_level', 'bin', 'fits', 'supplier', 'notes', 'photo'];
@@ -274,7 +341,7 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
     if (!m) return res.status(404).end();
     res.set('Content-Type', m[1]).set('Cache-Control', 'private, max-age=60').send(Buffer.from(m[2], 'base64'));
   });
-  api.post('/loose', (req, res) => {
+  api.post('/loose', need('parts_add'), (req, res) => {
     if (!req.body.name) return res.status(400).json({ error: 'Part name is required' });
     addVal('category', req.body.category); addVal('stock', req.body.stock);
     res.status(201).json({ id: run(`INSERT INTO loose_parts(${LF},created_at,updated_at) VALUES(${LF.map(() => '?')},?,?)`, [...lvals(req.body), now(), now()]) });
@@ -289,7 +356,7 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
     run('UPDATE loose_parts SET qty=MAX(0,COALESCE(qty,0)+?),updated_at=? WHERE id=?', [d, now(), +req.params.id]);
     const p = get('SELECT qty FROM loose_parts WHERE id=?', [+req.params.id]); p ? res.json(p) : res.status(404).json({ error: 'Not found' });
   });
-  api.delete('/loose/:id', admin, (req, res) => { run('DELETE FROM loose_parts WHERE id=?', [+req.params.id]); res.json({ ok: true }); });
+  api.delete('/loose/:id', need('parts_delete'), (req, res) => { run('DELETE FROM loose_parts WHERE id=?', [+req.params.id]); res.json({ ok: true }); });
   // Photo only update (equipment)
   api.put('/equipment/:id/photo', (req, res) => { run('UPDATE equipment SET photo=?,updated_at=? WHERE id=?', [req.body.photo || null, now(), +req.params.id]); res.json({ ok: true }); });
 
@@ -299,7 +366,7 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
   api.get('/equipment/:id/checklists', (req, res) => res.json(all(`SELECT c.*, (SELECT COUNT(*) FROM inspections i WHERE i.checklist_id=c.id) inspection_count,
     (SELECT MAX(created_at) FROM inspections i WHERE i.checklist_id=c.id) last_done FROM checklists c WHERE equipment_id=? ORDER BY c.is_example, c.name COLLATE NOCASE`, [+req.params.id]).map(ckOut)));
   api.get('/checklists/:id', (req, res) => { const c = ckOut(get('SELECT * FROM checklists WHERE id=?', [+req.params.id])); c ? res.json(c) : res.status(404).json({ error: 'Not found' }); });
-  api.post('/equipment/:id/checklists', (req, res) => {
+  api.post('/equipment/:id/checklists', need('records_add'), (req, res) => {
     const name = String(req.body.name || '').trim(); if (!name) return res.status(400).json({ error: 'Checklist name is required' });
     if (!get('SELECT id FROM equipment WHERE id=?', [+req.params.id])) return res.status(404).json({ error: 'Not found' });
     res.status(201).json({ id: run('INSERT INTO checklists(equipment_id,name,items,created_at,updated_at) VALUES(?,?,?,?,?)', [+req.params.id, name, JSON.stringify(cleanItems(req.body.items)), now(), now()]) });
@@ -308,11 +375,11 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
     const name = String(req.body.name || '').trim(); if (!name) return res.status(400).json({ error: 'Checklist name is required' });
     run('UPDATE checklists SET name=?,items=?,updated_at=? WHERE id=?', [name, JSON.stringify(cleanItems(req.body.items)), now(), +req.params.id]); res.json({ ok: true });
   });
-  api.delete('/checklists/:id', admin, (req, res) => { run('DELETE FROM checklists WHERE id=?', [+req.params.id]); res.json({ ok: true }); });
+  api.delete('/checklists/:id', need('records_delete'), (req, res) => { run('DELETE FROM checklists WHERE id=?', [+req.params.id]); res.json({ ok: true }); });
   // inspections (completed runs of a checklist)
   const inOut = r => r && { ...r, results: JSON.parse(r.results || '[]') };
   api.get('/checklists/:id/inspections', (req, res) => res.json(all('SELECT * FROM inspections WHERE checklist_id=? ORDER BY created_at DESC, id DESC', [+req.params.id]).map(inOut)));
-  api.post('/checklists/:id/inspections', (req, res) => {
+  api.post('/checklists/:id/inspections', need('records_add'), (req, res) => {
     const c = get('SELECT * FROM checklists WHERE id=?', [+req.params.id]); if (!c) return res.status(404).json({ error: 'Not found' });
     const b = req.body, results = (Array.isArray(b.results) ? b.results : []).map(r => ({ item: String(r.item || ''), result: r.result === 'fail' ? 'fail' : r.result === 'pass' ? 'pass' : 'skip', note: String(r.note || '').trim() }));
     if (!b.performed_by) return res.status(400).json({ error: 'Your name is required' });
@@ -321,13 +388,13 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
       [c.id, c.equipment_id, c.name, String(b.performed_by), b.date || now().slice(0, 10), b.meter === '' || b.meter == null ? null : +b.meter, JSON.stringify(results),
         results.filter(r => r.result === 'pass').length, results.filter(r => r.result === 'fail').length, b.notes || null, now()]) });
   });
-  api.delete('/inspections/:id', admin, (req, res) => { run('DELETE FROM inspections WHERE id=?', [+req.params.id]); res.json({ ok: true }); });
+  api.delete('/inspections/:id', need('records_delete'), (req, res) => { run('DELETE FROM inspections WHERE id=?', [+req.params.id]); res.json({ ok: true }); });
 
   // ---- Procedures: manuals & documents (files on disk in DATA_DIR/docs, random names) ----
   const SAFE_INLINE = /^(application\/pdf|image\/(png|jpeg|gif|webp|heic|heif)|text\/plain)$/;
   const docPath = n => path.join(DOCS_DIR, path.basename(n));
   api.get('/equipment/:id/docs', (req, res) => res.json(all('SELECT id,equipment_id,title,filename,mime,size,uploaded_by,created_at,updated_at FROM documents WHERE equipment_id=? ORDER BY title COLLATE NOCASE', [+req.params.id])));
-  api.post('/equipment/:id/docs', express.raw({ type: () => true, limit: MAX_DOC }), (req, res) => {
+  api.post('/equipment/:id/docs', need('records_add'), express.raw({ type: () => true, limit: MAX_DOC }), (req, res) => {
     const title = String(req.query.title || '').trim(), filename = path.basename(String(req.query.filename || 'file')).slice(0, 200);
     if (!title) return res.status(400).json({ error: 'Title is required' });
     if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'No file received' });
@@ -351,7 +418,7 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
     const title = String(req.body.title || '').trim(); if (!title) return res.status(400).json({ error: 'Title is required' });
     run('UPDATE documents SET title=?,updated_at=? WHERE id=?', [title, now(), +req.params.id]); res.json({ ok: true });
   });
-  api.delete('/docs/:id', admin, (req, res) => {
+  api.delete('/docs/:id', need('records_delete'), (req, res) => {
     const d = get('SELECT stored_name FROM documents WHERE id=?', [+req.params.id]);
     run('DELETE FROM documents WHERE id=?', [+req.params.id]);
     if (d) fs.rm(docPath(d.stored_name), { force: true }, () => {});

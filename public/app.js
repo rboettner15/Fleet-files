@@ -11,7 +11,7 @@ const CATS=['Filters','Belts','Hydraulic','Electrical','Hardware','Fluids','Tire
 const STATUSES=['in service','in shop','down'];
 const $=s=>document.querySelector(s), app=$('#app');
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const store={get code(){return LS.ff_code},set code(v){LS.ff_code=v},get name(){return LS.ff_name||''},set name(v){LS.ff_name=v}};
+const store={get token(){return LS.ff_token},set token(v){LS.ff_token=v},get name(){return LS.ff_name||''},set name(v){LS.ff_name=v}};
 const state={q:'',type:'all',status:'all',tab:'notes'};
 const typeImg=t=>window.FF_PHOTOS?window.FF_PHOTOS[(TYPES.includes(t)?t:'other').replace(' ','-')]:'/photos/'+(TYPES.includes(t)?t:'other').replace(' ','-')+'.jpg';
 const fmtDate=d=>d?new Date(d.length===10?d+'T12:00:00':d).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}):'—';
@@ -41,6 +41,18 @@ async function demoApi(path,opt){
   let x;
   if(!d.checklists){d.checklists=[];d.inspections=[];d.equipment.filter(e=>e.is_example).forEach(e=>d.checklists.push({id:nid(),equipment_id:e.id,name:'EXAMPLE – Daily Pre-Op Inspection',items:DEMO_CHECK.slice(),is_example:1,created_at:now,updated_at:now}));demoSave(d);}
   if(path==='/check')return{ok:true};
+  if(path==='/me')return DEMO_ME;
+  if(path==='/logout')return{ok:true};
+  if(path.startsWith('/people')||path==='/permissions'){
+    const L={eq_add:'Add equipment',eq_delete:'Delete equipment',parts_add:'Add parts (shop + machine)',parts_delete:'Delete parts (shop + machine)',todo_add:'Add to-dos',todo_delete:'Delete to-dos',records_add:'Add notes, service records, checklists, inspections & manuals',records_delete:'Delete notes, service records, checklists, inspections & manuals',lists_edit:'Edit chip lists (types, categories, status…)'};
+    if(!d.people){d.people=[{id:1,name:'Demo User',role:'admin',is_owner:true},{id:2,name:'Example Mechanic',role:'member',is_owner:false}];d.mperms={eq_add:false,eq_delete:false,parts_add:true,parts_delete:true,todo_add:false,todo_delete:false,records_add:true,records_delete:false,lists_edit:false};}
+    const pid=+path.split('/')[2],u=d.people.find(p=>p.id===pid),na=()=>d.people.filter(p=>p.role==='admin').length;
+    if(path==='/permissions'){Object.assign(d.mperms,b);demoSave(d);return{member_perms:d.mperms};}
+    if(path==='/people'&&m==='GET')return{people:d.people,member_perms:d.mperms,labels:L};
+    if(path==='/people'){if(!b.name)throw new Error('Enter a name');if(d.people.some(p=>p.name.toLowerCase()===b.name.toLowerCase()))throw new Error('Someone already has that name');d.people.push({id:nid(),name:b.name,role:b.role,is_owner:false});demoSave(d);return{ok:true};}
+    if(!u)throw new Error('Not found');
+    if(m==='DELETE'){if(u.is_owner)throw new Error('The owner can’t be removed');if(u.role==='admin'&&na()<=1)throw new Error('You need at least one admin');d.people=d.people.filter(p=>p!==u);demoSave(d);return{ok:true};}
+    if(b.role&&b.role!==u.role){if(u.role==='admin'&&na()<=1)throw new Error('You need at least one admin');u.role=b.role;}demoSave(d);return{ok:true};}
   if(!d.loose){d.loose=DEMO_LOOSE.map(p=>({...p,id:nid(),notes:'EXAMPLE part – delete when you add real parts.',photo:null,is_example:1,created_at:now,updated_at:now}));demoSave(d);}
   if(!d.lists){d.lists={type:TYPES.slice(),category:CATS.slice()};
     const seen=(k,v)=>{if(v&&!d.lists[k].some(o=>o.toLowerCase()===String(v).toLowerCase()))d.lists[k].push(v);};
@@ -130,12 +142,11 @@ async function startDemo(){LS.ff_demo='1';if(!store.name)store.name='Demo User';
 
 async function api(path,opt={}){
   if(isDemo())return demoApi(path,opt);
-  const h={'Content-Type':'application/json','x-access-code':store.code||''};
-  if(opt.admin)h['x-admin-code']=opt.admin;
+  const h={'Content-Type':'application/json','x-session':store.token||''};
   const r=await fetch('/api'+path,{method:opt.method||'GET',headers:h,body:opt.body?JSON.stringify(opt.body):undefined});
   const offline=r.status===503; $('#offline').hidden=!offline;
   const j=await r.json().catch(()=>({}));
-  if(r.status===401){store.code='';route();throw new Error('Access code needed');}
+  if(r.status===401){LS.removeItem('ff_token');LS.removeItem('ff_me');ME=null;close();route();throw new Error('Please sign in');}
   if(!r.ok)throw new Error(offline?'You are offline – changes need a connection':(j.error||'Error'));
   return j;
 }
@@ -148,23 +159,27 @@ window.addEventListener('hashchange',route);
 function login(){
   header('Fleet Files');document.body.classList.add('login-bg');$('#menu').hidden=true;
   app.innerHTML=`<div class="login"><div class="login-wm">FLEET<span class="wm-y">FILES</span></div><div class="login-tag">Shop equipment · Service · Parts</div>
-  <p class="mini">Enter the company access code and your name. Your name is shown on notes you leave.</p>
-  <label for="c">Company access code</label><input id="c" autocomplete="off" autocapitalize="off">
-  <label for="n">Your name</label><input id="n" value="${esc(store.name)}" autocomplete="name">
+  <p class="mini">Sign in with your name and PIN. Ask the shop admin if you don’t have one. This phone will remember you.</p>
+  <label for="n">Your name</label><input id="n" value="${esc(store.name)}" autocomplete="username" autocapitalize="words">
+  <label for="c">PIN</label><input id="c" type="password" inputmode="numeric" autocomplete="current-password">
   <div class="err" id="e"></div><button class="btn primary block" id="go" style="margin-top:6px">Open Fleet Files</button>
   <button class="btn block demo-btn" id="demo" style="margin-top:12px">▶ Try Demo</button><div class="mini" style="margin-top:6px">Demo uses example data only and saves nothing to the company database.</div></div>`;
   $('#demo').onclick=startDemo;
-  $('#go').onclick=async()=>{const c=$('#c').value.trim(),n=$('#n').value.trim();
+  const go=async()=>{const c=$('#c').value.trim(),n=$('#n').value.trim();
     if(!c||!n)return $('#e').textContent='Please fill in both boxes.';
-    const r=await fetch('/api/check',{headers:{'x-access-code':c}}).catch(()=>null);
-    if(!r||!r.ok)return $('#e').textContent=r?'That access code is not right.':'No connection.';
-    store.code=c;store.name=n;$('#menu').hidden=false;route();};
+    const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,pin:c})}).catch(()=>null);
+    const j=r?await r.json().catch(()=>({})):{};
+    if(!r||!r.ok)return $('#e').textContent=r?(j.error||'Name or PIN is not right.'):'No connection.';
+    store.token=j.token;store.name=j.user.name;ME={user:j.user,perms:j.perms};LS.ff_me=JSON.stringify(ME);LS.removeItem('ff_code');$('#menu').hidden=false;route();};
+  $('#go').onclick=go;$('#c').onkeydown=e=>{if(e.key==='Enter')go();};
 }
 
+let routeMe=0;
 function route(){
   demoBanner();
   if(isDemo()&&!store.name)store.name='Demo User';
-  if(!isDemo()&&(!store.code||!store.name))return login();
+  if(!isDemo()&&!store.token)return login();
+  if(!isDemo()&&!routeMe){routeMe=1;loadMe().then(gate);}
   $('#menu').hidden=false;document.body.classList.remove('login-bg');
   const m=location.hash.match(/^#\/eq\/(\d+)/);
   m?detail(+m[1]):location.hash==='#/parts'?partsPage():location.hash==='#/todo'?todoPage():list();
@@ -175,7 +190,7 @@ async function list(){
   header('Fleet Files',false);
   app.innerHTML=SEG('eq')+`<input class="search" id="q" type="search" placeholder="🔍  Search name, unit #, make, VIN…" value="${esc(state.q)}">
    <div class="chips" id="tc"></div><div class="chips" id="sc"></div><div id="list"><div class="empty">Loading…</div></div>
-   <button class="btn primary fab" id="add">＋ Add Equipment</button>`;
+   <button class="btn primary fab" data-perm="eq_add" id="add">＋ Add Equipment</button>`;
   const chips=(el,arr,key)=>{el.innerHTML=['all',...arr].map(v=>`<button class="chip ${state[key]===v?'on':''}" data-v="${esc(v)}">${v==='all'?(key==='type'?'All types':'All status'):esc(v)}</button>`).join('')+editChip(key);
     el.onclick=e=>{if(e.target.closest('[data-edit]'))return listEditor(key,list);const b=e.target.closest('.chip');if(!b)return;state[key]=b.dataset.v;chips(el,LISTS[key],key);draw();};};
   await loadLists();if(!$('#tc'))return;chips($('#tc'),LISTS.type,'type');if(state.status!=='all'&&!LISTS.status.includes(state.status))state.status='all';chips($('#sc'),LISTS.status,'status');
@@ -191,7 +206,7 @@ function draw(){
     (!q||[e.name,e.unit,e.make,e.model,e.vin,e.location,e.type].join(' ').toLowerCase().includes(q)));
   $('#list').innerHTML=rows.length?`<div class="mini">${rows.length} of ${cache.length} units</div>`+rows.map(e=>`
    <button class="card s-${sc(e.status)}" onclick="location.hash='#/eq/${e.id}'">
-    <div class="thumb"><img loading="lazy" src="${e.photo_src?e.photo_src:e.has_photo?`/api/equipment/${e.id}/photo?code=${encodeURIComponent(store.code)}&v=${encodeURIComponent(e.updated_at)}`:typeImg(e.type)}" alt="" onerror="this.src='${typeImg(e.type)}'"></div>
+    <div class="thumb"><img loading="lazy" src="${e.photo_src?e.photo_src:e.has_photo?`/api/equipment/${e.id}/photo?t=${encodeURIComponent(store.token||'')}&v=${encodeURIComponent(e.updated_at)}`:typeImg(e.type)}" alt="" onerror="this.src='${typeImg(e.type)}'"></div>
     <div class="main"><div class="name">${esc(e.name)}</div>
      <div class="sub">${esc([e.unit&&('#'+e.unit),e.year,e.make,e.model].filter(Boolean).join(' · '))}</div>
      <div class="sub"><span class="badge b-${sc(e.status)}">${esc(e.status)}</span>${e.is_example?'<span class="badge b-ex">Example</span>':''}${e.low_parts?`<span class="badge b-low">${e.low_parts} low part${e.low_parts>1?'s':''}</span>`:''}</div>
@@ -226,13 +241,13 @@ async function tab(e){
   if(state.tab==='procedures')return procTab(e);
   if(state.tab==='notes'){
     tb.innerHTML=`<textarea id="nb" placeholder="Write a note about this unit…"></textarea><div class="mini" style="margin:4px 0 8px">Posting as <b>${esc(store.name)}</b></div>
-     <button class="btn primary block" id="post">Post Note</button><div id="nl"><div class="empty">Loading…</div></div>`;
+     <button class="btn primary block" data-perm="records_add" id="post">Post Note</button><div id="nl"><div class="empty">Loading…</div></div>`;
     $('#post').onclick=async()=>{const body=$('#nb').value.trim();if(!body)return toast('Type a note first');
       try{await api(`/equipment/${e.id}/notes`,{method:'POST',body:{author:store.name,body}});toast('Note posted');tab(e);}catch(x){toast(x.message);}};
     const ns=await api(`/equipment/${e.id}/notes`).catch(()=>[]);
     $('#nl').innerHTML=ns.length?ns.map(n=>`<div class="item"><div class="meta"><b>${esc(n.author)}</b><span>${fmtTime(n.created_at)}</span></div><div class="body">${esc(n.body)}</div></div>`).join(''):'<div class="empty">No notes yet.</div>';
     return;}
-  tb.innerHTML=`<button class="btn primary block" id="addsvc">＋ Add Service Record</button><div id="sl"><div class="empty">Loading…</div></div>`;
+  tb.innerHTML=`<button class="btn primary block" data-perm="records_add" id="addsvc">＋ Add Service Record</button><div id="sl"><div class="empty">Loading…</div></div>`;
   $('#addsvc').onclick=()=>serviceForm(e);
   const ss=await api(`/equipment/${e.id}/service`).catch(()=>[]);
   $('#sl').innerHTML=ss.length?ss.map(s=>`<div class="item"><div class="meta"><b>${fmtDate(s.date)}</b><span>${s.meter!=null?Number(s.meter).toLocaleString()+' '+(e.meter_unit||''):''}</span></div>
@@ -277,7 +292,7 @@ function editForm(e){
    <div class="row"><label class="btn" style="margin:0;color:var(--text)">📷 ${photo?'Change':'Add'} Photo<input id="f_photo" type="file" accept="image/*" hidden></label>
    <button class="btn" id="rmp" ${photo?'':'hidden'}>Remove</button></div>
    <div class="row" style="margin-top:18px"><button class="btn" id="x">Cancel</button><button class="btn primary" id="s">Save</button></div>
-   ${isNew?'':'<button class="btn danger block" id="del" style="margin-top:22px">🗑 Delete Equipment</button><div class="mini" style="text-align:center;margin-top:6px">Requires the admin code</div>'}`);
+   ${isNew?'':'<button class="btn danger block" data-perm="eq_delete" id="del" style="margin-top:22px">🗑 Delete Equipment</button>'}`);
   $('#f_photo').onchange=async ev=>{const f=ev.target.files[0];if(!f)return;try{photo=await shrink(f);$('#pv').src=photo;$('#pv').style.display='';$('#rmp').hidden=false;}catch{toast('Could not read photo');}};
   $('#rmp').onclick=()=>{photo=null;$('#pv').style.display='none';$('#rmp').hidden=true;};
   $('#x').onclick=close;
@@ -285,26 +300,18 @@ function editForm(e){
     if(!b.name)return toast('Name is required');
     try{if(isNew){const r=await api('/equipment',{method:'POST',body:b});close();toast('Equipment added');location.hash='#/eq/'+r.id;}
       else{await api('/equipment/'+e.id,{method:'PUT',body:b});close();toast('Saved');detail(e.id);}}catch(x){toast(x.message);}};
-  if(!isNew)$('#del').onclick=()=>confirmDelete(e);
-}
-function confirmDelete(e){
-  modal(`<h2>Delete “${esc(e.name)}”?</h2><p>This permanently removes the equipment and all of its notes and service records. This cannot be undone.</p>
-   <label>Admin code${isDemo()?' (demo: type anything)':''}</label><input id="ac" type="password" autocomplete="off" value="${esc(SS.ff_admin||'')}">
-   <div class="err" id="er"></div><div class="row" style="margin-top:12px"><button class="btn" id="x">Cancel</button><button class="btn danger" id="y">Delete</button></div>`);
-  $('#x').onclick=close;
-  $('#y').onclick=async()=>{const a=$('#ac').value.trim();if(!a)return $('#er').textContent='Enter the admin code.';
-    try{await api('/equipment/'+e.id,{method:'DELETE',admin:a});SS.ff_admin=a;close();toast('Deleted');location.hash='';list();}catch(x){$('#er').textContent=x.message==='Admin code required'?'Wrong admin code.':x.message;}};
+  if(!isNew)$('#del').onclick=()=>adminConfirm(`Delete “${esc(e.name)}”?`,'This permanently removes the equipment and all of its notes and service records. This cannot be undone.','Delete',async()=>{await api('/equipment/'+e.id,{method:'DELETE'});close();toast('Deleted');location.hash='';list();});
 }
 function settings(){
-  modal(`<h2>Settings</h2><label>Your name (shown on notes)</label><input id="nm" value="${esc(store.name)}">
-   <button class="btn primary block" id="sv" style="margin-top:12px">Save Name</button>
+  modal(`<h2>Settings</h2><div class="item"><div class="mini">Signed in as</div><b>${esc(isDemo()?'Demo User':(ME&&ME.user.name)||store.name)}</b> <span class="badge ${isAdmin()?'b-owner':'b-td'}">${isAdmin()?'Admin':'Member'}</span></div>
+   ${isAdmin()?'<button class="btn primary block" id="ppl" style="margin-top:12px">👥 People & Permissions</button>':''}
    <button class="btn block" id="lo" style="margin-top:10px">Sign Out</button>
    <button class="btn block" id="cr" style="margin-top:10px">Photo Credits</button><p class="mini" style="margin-top:16px">Fleet Files v1 · Install: iPhone Safari → Share → Add to Home Screen. Android Chrome → ⋮ → Install app.</p>
    <button class="btn block" id="x" style="margin-top:6px">Close</button>`);
-  $('#sv').onclick=()=>{const n=$('#nm').value.trim();if(n){store.name=n;toast('Name saved');close();}};
+  if($('#ppl'))$('#ppl').onclick=peopleSheet;
   $('#cr').onclick=credits;
   if(isDemo()){$('#lo').textContent=window.FF_STANDALONE?'Reset Demo':'Exit Demo';$('#lo').onclick=()=>window.FF_STANDALONE?resetDemo():exitDemo();}else
-  $('#lo').onclick=()=>{LS.removeItem('ff_code');close();route();};
+  $('#lo').onclick=async()=>{try{await api('/logout',{method:'POST'});}catch(e){}LS.removeItem('ff_token');LS.removeItem('ff_me');ME=null;routeMe=0;close();route();};
   $('#x').onclick=close;
 }
 
@@ -326,7 +333,7 @@ const money=v=>v==null||v===''?'':'$'+Number(v).toFixed(2);
 const isLow=p=>p.qty!=null&&p.reorder_level!=null&&Number(p.qty)<=Number(p.reorder_level);
 async function partsTab(e){
   const tb=$('#tabbody');
-  tb.innerHTML=`<button class="btn primary block" id="addp">＋ Add Part</button>
+  tb.innerHTML=`<button class="btn primary block" data-perm="parts_add" id="addp">＋ Add Part</button>
    <input id="pq" type="search" placeholder="🔍  Search parts, part #, brand, bin…" style="margin-top:10px" value="${esc(state.pq||'')}">
    <div id="pl"><div class="empty">Loading…</div></div>`;
   $('#addp').onclick=()=>partForm(e);
@@ -336,7 +343,7 @@ async function partsTab(e){
     const low=parts.filter(isLow).length;
     $('#pl').innerHTML=(low?`<div class="lowbar">⚠ ${low} part${low>1?'s':''} at or below reorder level</div>`:'')+
      (rows.length?rows.map(p=>`<button class="pcard ${isLow(p)?'low':''}" data-id="${p.id}">
-       <div class="thumb">${p.photo_src?`<img src="${p.photo_src}" alt="">`:p.has_photo?`<img loading="lazy" src="/api/parts/${p.id}/photo?code=${encodeURIComponent(store.code)}&v=${encodeURIComponent(p.updated_at)}" alt="">`:'🔩'}</div>
+       <div class="thumb">${p.photo_src?`<img src="${p.photo_src}" alt="">`:p.has_photo?`<img loading="lazy" src="/api/parts/${p.id}/photo?t=${encodeURIComponent(store.token||'')}&v=${encodeURIComponent(p.updated_at)}" alt="">`:'🔩'}</div>
        <div class="main"><div class="name">${esc(p.name)}</div>
         <div class="sub">${esc([p.part_number&&('#'+p.part_number),p.manufacturer].filter(Boolean).join(' · '))}</div>
         <div class="sub">${p.bin?'📍 '+esc(p.bin):''} ${p.price!=null?' · '+money(p.price):''}</div></div>
@@ -372,7 +379,7 @@ function partForm(e,p){
    <label>Photo (optional)</label><img id="ppv" class="hero" style="max-height:160px;${photo?'':'display:none'}" src="${photo||''}">
    <div class="row"><label class="btn" style="margin:0;color:var(--text)">📷 ${photo?'Change':'Add'} Photo<input id="p_photo" type="file" accept="image/*" hidden></label><button class="btn" id="prm" ${photo?'':'hidden'}>Remove</button></div>
    <div class="row" style="margin-top:18px"><button class="btn" id="x">Cancel</button><button class="btn primary" id="s">Save Part</button></div>
-   ${isNew?'':'<button class="btn danger block" id="del" style="margin-top:22px">🗑 Delete Part</button>'}`);
+   ${isNew?'':'<button class="btn danger block" data-perm="parts_delete" id="del" style="margin-top:22px">🗑 Delete Part</button>'}`);
   $('#p_photo').onchange=async ev=>{const fl=ev.target.files[0];if(!fl)return;try{photo=await shrink(fl);$('#ppv').src=photo;$('#ppv').style.display='';$('#prm').hidden=false;}catch{toast('Could not read photo');}};
   $('#prm').onclick=()=>{photo=null;$('#ppv').style.display='none';$('#prm').hidden=true;};
   $('#x').onclick=close;
@@ -389,24 +396,22 @@ function partForm(e,p){
 // ---------- Procedures: inspection checklists + manuals ----------
 const fmtSize=n=>n>=1048576?(n/1048576).toFixed(1)+' MB':Math.max(1,Math.round(n/1024))+' KB';
 const docIcon=d=>/pdf/.test(d.mime||'')?'📕':/^image\//.test(d.mime||'')?'🖼':'📄';
-const docUrl=d=>`/api/docs/${d.id}/file?code=${encodeURIComponent(store.code||'')}`;
+const docUrl=d=>`/api/docs/${d.id}/file?t=${encodeURIComponent(store.token||'')}`;
 function adminConfirm(title,text,btn,fn){
   modal(`<h2>${title}</h2><p>${text}</p>
-   <label>Admin code${isDemo()?' (demo: type anything)':''}</label><input id="ac" type="password" autocomplete="off" value="${esc(SS.ff_admin||'')}">
    <div class="err" id="er"></div><div class="row" style="margin-top:12px"><button class="btn" id="x">Cancel</button><button class="btn danger" id="y">${btn}</button></div>`);
   $('#x').onclick=close;
-  $('#y').onclick=async()=>{const a=$('#ac').value.trim();if(!a)return $('#er').textContent='Enter the admin code.';
-    try{await fn(a);SS.ff_admin=a;}catch(x){$('#er').textContent=x.message==='Admin code required'?'Wrong admin code.':x.message;}};
+  $('#y').onclick=async()=>{try{await fn('');}catch(x){$('#er').textContent=x.message;}};
 }
 async function procTab(e){
   const tb=$('#tabbody');
   tb.innerHTML=`<div class="sec-h">✅ Inspection Checklists</div>
    <div id="cl"><div class="empty">Loading…</div></div>
-   <button class="btn primary block" id="addc">＋ New Checklist</button>
+   <button class="btn primary block" data-perm="records_add" id="addc">＋ New Checklist</button>
    <div class="sec-h" style="margin-top:26px">📘 Manuals &amp; Documents</div>
    <div id="dl"><div class="empty">Loading…</div></div>
    ${isDemo()?'<div class="item mini">Uploading manuals is turned off in the demo. In the real app, tap “Upload Manual” to add a PDF or photo (up to 25 MB).</div>':
-   '<label class="btn primary block" id="upl" style="color:#111">⬆ Upload Manual / Document<input id="docf" type="file" accept=".pdf,image/*,.doc,.docx,.xls,.xlsx,.txt,.csv,.ppt,.pptx" hidden></label>'}`;
+   '<label class="btn primary block" data-perm="records_add" id="upl" style="color:#111">⬆ Upload Manual / Document<input id="docf" type="file" accept=".pdf,image/*,.doc,.docx,.xls,.xlsx,.txt,.csv,.ppt,.pptx" hidden></label>'}`;
   $('#addc').onclick=()=>checklistForm(e);
   if($('#docf'))$('#docf').onchange=ev=>{const f=ev.target.files[0];ev.target.value='';if(f)uploadForm(e,f);};
   const [cs,ds]=await Promise.all([api(`/equipment/${e.id}/checklists`).catch(()=>[]),api(`/equipment/${e.id}/docs`).catch(()=>[])]);
@@ -439,7 +444,7 @@ function inspectionView(e,c,h){
    ${h.results.map(r=>`<div class="ires ${r.result}"><span class="pf">${r.result==='pass'?'✓ PASS':r.result==='fail'?'✗ FAIL':'– SKIP'}</span><div><div>${esc(r.item)}</div>${r.note?`<div class="mini">📝 ${esc(r.note)}</div>`:''}</div></div>`).join('')}
    ${h.notes?`<div class="item"><div class="body">${esc(h.notes)}</div></div>`:''}
    <button class="btn block" id="bk" style="margin-top:12px">‹ Back</button>
-   <button class="linkbtn" id="del" style="margin-top:10px;width:100%">Delete this inspection record</button>`);
+   <button class="linkbtn" data-perm="records_delete" id="del" style="margin-top:10px;width:100%">Delete this inspection record</button>`);
   $('#bk').onclick=()=>checklistView(e,c);
   $('#del').onclick=()=>adminConfirm('Delete inspection record?','This removes the inspection from '+fmtDate(h.date)+'. This cannot be undone.','Delete',async a=>{await api('/inspections/'+h.id,{method:'DELETE',admin:a});toast('Deleted');checklistView(e,c);});
 }
@@ -450,7 +455,7 @@ function checklistForm(e,c){
    <label for="ci">Items to check – one per line</label><textarea id="ci" rows="9" placeholder="Engine oil level OK&#10;Tires OK&#10;Lights work">${esc(c.items.join('\n'))}</textarea>
    <div class="mini">Each line becomes one Pass / Fail item.</div>
    <div class="row" style="margin-top:16px"><button class="btn" id="x">Cancel</button><button class="btn primary" id="s">Save</button></div>
-   ${isNew?'':'<button class="btn danger block" id="del" style="margin-top:22px">🗑 Delete Checklist</button>'}`);
+   ${isNew?'':'<button class="btn danger block" data-perm="records_delete" id="del" style="margin-top:22px">🗑 Delete Checklist</button>'}`);
   $('#x').onclick=isNew?close:()=>checklistView(e,c);
   $('#s').onclick=async()=>{const name=$('#cn').value.trim(),items=$('#ci').value.split('\n').map(s=>s.trim()).filter(Boolean);
     if(!name)return toast('Give the checklist a name');if(!items.length)return toast('Add at least one item');
@@ -489,7 +494,7 @@ function uploadForm(e,f){
   $('#s').onclick=async()=>{const title=$('#dt').value.trim();if(!title)return $('#er').textContent='Enter a title.';
     const s=$('#s');s.disabled=true;s.textContent='Uploading…';
     try{const q=new URLSearchParams({title,filename:f.name,type:f.type||'application/octet-stream',by:store.name});
-      const r=await fetch(`/api/equipment/${e.id}/docs?`+q,{method:'POST',headers:{'x-access-code':store.code||'','Content-Type':'application/octet-stream'},body:f});
+      const r=await fetch(`/api/equipment/${e.id}/docs?`+q,{method:'POST',headers:{'x-session':store.token||'','Content-Type':'application/octet-stream'},body:f});
       const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(r.status===413?'File is too big (max 25 MB)':j.error||'Upload failed – check your connection');
       toast('Uploaded');backToProc(e);}catch(x){s.disabled=false;s.textContent='Upload';$('#er').textContent=x.message;}};
 }
@@ -499,7 +504,7 @@ function docSheet(e,d){
    <a class="btn primary block" id="op" style="margin-top:14px;text-decoration:none" href="${docUrl(d)}" target="_blank" rel="noopener">📖 Open</a>
    <button class="btn block" id="rn" style="margin-top:10px">✎ Rename</button>
    <button class="btn block" id="x" style="margin-top:10px">Close</button>
-   <button class="btn danger block" id="del" style="margin-top:22px">🗑 Delete</button>`);
+   <button class="btn danger block" data-perm="records_delete" id="del" style="margin-top:22px">🗑 Delete</button>`);
   $('#x').onclick=close;
   $('#rn').onclick=()=>{modal(`<h2>Rename</h2><label for="dt">Title</label><input id="dt" value="${esc(d.title)}"><div class="row" style="margin-top:16px"><button class="btn" id="x">Cancel</button><button class="btn primary" id="s">Save</button></div>`);
     $('#x').onclick=()=>docSheet(e,d);
@@ -514,7 +519,7 @@ async function partsPage(){
   state.lq=state.lq||'';state.lcat=state.lcat||'all';state.lstock=state.lstock||'all';
   app.innerHTML=SEG('parts')+`<input class="search" id="lq" type="search" placeholder="🔍  Search any part, part #, brand, bin…" value="${esc(state.lq)}">
    <div class="chips" id="lc"></div><div class="chips" id="ls"></div><div id="list"><div class="empty">Loading…</div></div>
-   <button class="btn primary fab" id="add">＋ Add Part</button>`;
+   <button class="btn primary fab" data-perm="parts_add" id="add">＋ Add Part</button>`;
   $('#add').onclick=()=>looseForm();
   let qt;$('#lq').oninput=e=>{state.lq=e.target.value;clearTimeout(qt);qt=setTimeout(drawLoose,150);};
   $('#ls').onclick=e=>{if(e.target.closest('[data-edit]'))return listEditor('stock',partsPage);const b=e.target.closest('.chip');if(!b)return;state.lstock=b.dataset.v;drawLoose();};
@@ -534,7 +539,7 @@ function drawLoose(){
   const stk=LISTS.stock.slice();loose.forEach(p=>{if(p.stock&&!stk.includes(p.stock))stk.push(p.stock);});
   $('#ls').innerHTML=['all',...stk].map(v=>`<button class="chip ${state.lstock===v?'on':''}" data-v="${esc(v)}">${v==='all'?'All stock':esc(v)}</button>`).join('')+editChip('stock');
   const rows=loose.filter(p=>(state.lcat==='all'||p.category===state.lcat)&&(state.lstock==='all'||effStock(p)===state.lstock)&&(!q||partHit(p,q)));
-  const thumb=p=>p.photo_src?`<img src="${p.photo_src}" alt="">`:p.has_photo?`<img loading="lazy" src="/api/loose/${p.id}/photo?code=${encodeURIComponent(store.code||'')}&v=${encodeURIComponent(p.updated_at)}" alt="">`:'🔩';
+  const thumb=p=>p.photo_src?`<img src="${p.photo_src}" alt="">`:p.has_photo?`<img loading="lazy" src="/api/loose/${p.id}/photo?t=${encodeURIComponent(store.token||'')}&v=${encodeURIComponent(p.updated_at)}" alt="">`:'🔩';
   let h=(q?`<div class="sec-h">🧰 Shop Parts (${rows.length})</div>`:`<div class="mini">${rows.length} of ${loose.length} shop parts${loose.filter(isLow).length?` · <b style="color:var(--orange)">${loose.filter(isLow).length} low</b>`:''}</div>`)+
    (rows.length?rows.map(p=>`<button class="pcard lp ${isLow(p)?'low':''}" data-id="${p.id}"><div class="thumb">${thumb(p)}</div>
     <div class="main"><div class="name">${esc(p.name)}</div>
@@ -583,7 +588,7 @@ function looseForm(p){
    <label>Photo (optional)</label><img id="lpv" class="hero" style="max-height:160px;${photo?'':'display:none'}" src="${photo||''}">
    <div class="row"><label class="btn" style="margin:0;color:var(--text)">📷 ${photo?'Change':'Add'} Photo<input id="l_photo" type="file" accept="image/*" hidden></label><button class="btn" id="lrm" ${photo?'':'hidden'}>Remove</button></div>
    <div class="row" style="margin-top:18px"><button class="btn" id="x">Cancel</button><button class="btn primary" id="s">Save Part</button></div>
-   ${isNew?'':'<button class="btn danger block" id="del" style="margin-top:22px">🗑 Delete Part</button>'}`);
+   ${isNew?'':'<button class="btn danger block" data-perm="parts_delete" id="del" style="margin-top:22px">🗑 Delete Part</button>'}`);
   $('#l_photo').onchange=async ev=>{const fl=ev.target.files[0];if(!fl)return;try{photo=await shrink(fl);$('#lpv').src=photo;$('#lpv').style.display='';$('#lrm').hidden=false;}catch{toast('Could not read photo');}};
   $('#lrm').onclick=()=>{photo=null;$('#lpv').style.display='none';$('#lrm').hidden=true;};
   $('#x').onclick=isNew?close:()=>looseView(p.id);
@@ -602,7 +607,7 @@ const autoStock=p=>p.qty==null||p.qty===''?'':Number(p.qty)<=0?roleVal('stock','
 const effStock=p=>p.stock||autoStock(p);
 const LNAME={type:['type','types','machine','machines'],category:['category','categories','shop part','shop parts'],status:['status','statuses','machine','machines'],stock:['stock status','stock statuses','shop part','shop parts'],todo_status:['status','statuses','to-do','to-dos'],priority:['priority','priorities','to-do','to-dos']};
 async function loadLists(){try{const l=await api('/lists');if(l&&l.type){Object.assign(LISTS,l);LISTS.roles=l.roles||{};}}catch(e){}}
-const editChip=kind=>`<button class="chip chip-edit" data-edit="${kind}" aria-label="Edit ${LNAME[kind][1]}">✎ Edit</button>`;
+const editChip=kind=>`<button data-perm="lists_edit" class="chip chip-edit" data-edit="${kind}" aria-label="Edit ${LNAME[kind][1]}">✎ Edit</button>`;
 // <select> of the list + "New…" which reveals a text box
 function pickField(id,label,kind,val){const vs=LISTS[kind].slice();if(val&&!vs.some(v=>v.toLowerCase()===String(val).toLowerCase()))vs.push(val);
   return `<div><label for="${id}">${label}</label><select id="${id}" onchange="document.getElementById('${id}_new').hidden=this.value!=='__new'">
@@ -650,7 +655,7 @@ async function todoPage(){
   state.tq=state.tq||'';state.tstat=state.tstat||'all';state.tpri=state.tpri||'all';
   app.innerHTML=SEG('todo')+`<input class="search" id="tq" type="search" placeholder="🔍  Search to-dos, notes, machine…" value="${esc(state.tq)}">
    <div class="chips" id="tsc"></div><div class="chips" id="tpc"></div><div id="list"><div class="empty">Loading…</div></div>
-   <button class="btn primary fab" id="add">＋ Add To Do</button>`;
+   <button class="btn primary fab" data-perm="todo_add" id="add">＋ Add To Do</button>`;
   $('#add').onclick=()=>todoForm();
   let qt;$('#tq').oninput=e=>{state.tq=e.target.value;clearTimeout(qt);qt=setTimeout(drawTodos,150);};
   const chipRow=(id,kind,key,allLbl)=>{$(id).onclick=e=>{if(e.target.closest('[data-edit]'))return listEditor(kind,todoPage);const b=e.target.closest('.chip');if(!b)return;state[key]=b.dataset.v;drawTodos();};};
@@ -704,12 +709,56 @@ async function todoForm(t){
    <label for="t_due">Due date (optional)</label><input id="t_due" type="date" value="${esc(t.due_date)}">
    <div class="mini" style="margin-top:8px">${isNew?`Added by <b>${esc(store.name)}</b>`:`Added by <b>${esc(t.author||'—')}</b> · ${fmtTime(t.created_at)}`}</div>
    <div class="row" style="margin-top:16px"><button class="btn" id="x">Cancel</button><button class="btn primary" id="s">Save</button></div>
-   ${isNew?'':'<button class="btn danger block" id="del" style="margin-top:22px">🗑 Delete To Do</button><div class="mini" style="text-align:center;margin-top:6px">Requires the admin code</div>'}`);
+   ${isNew?'':'<button class="btn danger block" data-perm="todo_delete" id="del" style="margin-top:22px">🗑 Delete To Do</button>'}`);
   $('#x').onclick=close;
   $('#s').onclick=async()=>{const b={title:$('#t_title').value.trim(),notes:$('#t_notes').value.trim(),status:pickVal('t_status'),priority:pickVal('t_priority'),equipment_id:$('#t_eq').value||null,due_date:$('#t_due').value||null,author:store.name};
     if(!b.title)return toast('Title is required');
     try{if(isNew)await api('/todos',{method:'POST',body:b});else await api('/todos/'+t.id,{method:'PUT',body:b});close();toast(isNew?'To-do added':'Saved');todoPage();}catch(x){toast(x.message);}};
   if(!isNew)$('#del').onclick=()=>adminConfirm(`Delete “${esc(t.title)}”?`,'This permanently removes this to-do. This cannot be undone.','Delete',async a=>{await api('/todos/'+t.id,{method:'DELETE',admin:a});close();toast('Deleted');todoPage();});
+}
+// ---------- People & permissions (v11) ----------
+let ME=null;try{ME=JSON.parse(LS.ff_me||'null');}catch(e){}
+const DEMO_ME={user:{id:1,name:'Demo User',role:'admin',is_owner:true},perms:{eq_add:1,eq_delete:1,parts_add:1,parts_delete:1,todo_add:1,todo_delete:1,records_add:1,records_delete:1,lists_edit:1}};
+const isAdmin=()=>isDemo()||(ME&&ME.user.role==='admin');
+const can=p=>isDemo()||!!(ME&&(ME.user.role==='admin'||ME.perms[p]));
+async function loadMe(){if(isDemo())return;try{ME=await api('/me');LS.ff_me=JSON.stringify(ME);store.name=ME.user.name;}catch(e){}}
+// anything marked data-perm="x" is hidden for people without permission x (the server also refuses)
+const gate=()=>document.querySelectorAll('[data-perm]').forEach(el=>{const ok=can(el.dataset.perm);if(el.hidden===ok)el.hidden=!ok;});
+new MutationObserver(gate).observe(document.body,{childList:true,subtree:true});
+async function peopleSheet(){
+  let d;try{d=await api('/people');}catch(x){return toast(x.message);}
+  const L=d.labels,mp=d.member_perms;
+  modal(`<h2>People & Permissions</h2>
+   <div class="mini">Everyone signs in with their <b>name + PIN</b>. Admins can do everything. Members can do what’s switched on below.</div>
+   <div class="sec-h">👥 People (${d.people.length})</div>
+   ${d.people.map(u=>`<div class="person" data-id="${u.id}"><div class="pmain"><b>${esc(u.name)}</b>${u.is_owner?'<span class="badge b-owner">Owner</span>':''}
+     <div class="mini">${u.role==='admin'?'Admin – full access':'Member'}</div></div>
+     ${u.is_owner?'':`<select class="prole" aria-label="Role for ${esc(u.name)}"><option value="member" ${u.role==='member'?'selected':''}>Member</option><option value="admin" ${u.role==='admin'?'selected':''}>Admin</option></select>
+     <div class="row pbtns"><button class="btn ppin">🔑 Reset PIN</button><button class="btn danger prm">Remove</button></div>`}</div>`).join('')}
+   <button class="btn primary block" id="addper" style="margin-top:10px">＋ Add Person</button>
+   <div class="sec-h" style="margin-top:20px">🔧 What members can do</div>
+   <div class="mini">Members can always view and edit everything. These switches control adding and deleting.</div>
+   ${Object.keys(L).map(k=>`<label class="toggle"><span>${esc(L[k])}</span><input type="checkbox" data-k="${k}" ${mp[k]?'checked':''}><i></i></label>`).join('')}
+   <button class="btn block" id="x" style="margin-top:16px">Done</button>`);
+  $('#x').onclick=close;$('#addper').onclick=()=>personForm();
+  const M=$('#modal');
+  M.querySelectorAll('.toggle input').forEach(c=>c.onchange=async()=>{try{await api('/permissions',{method:'PUT',body:{[c.dataset.k]:c.checked}});toast('Saved');}catch(x){c.checked=!c.checked;toast(x.message);}});
+  M.querySelectorAll('.person').forEach(row=>{const id=+row.dataset.id,u=d.people.find(p=>p.id===id);if(u.is_owner)return;
+    row.querySelector('.prole').onchange=async ev=>{try{await api('/people/'+id,{method:'PUT',body:{role:ev.target.value}});toast(u.name+' is now '+(ev.target.value==='admin'?'an Admin':'a Member'));await loadMe();peopleSheet();}catch(x){toast(x.message);peopleSheet();}};
+    row.querySelector('.ppin').onclick=()=>personForm(u);
+    row.querySelector('.prm').onclick=()=>adminConfirm(`Remove ${esc(u.name)}?`,'They won’t be able to sign in any more. Their notes and records stay.','Remove',async()=>{await api('/people/'+id,{method:'DELETE'});toast('Removed');peopleSheet();});});
+}
+function personForm(u){
+  modal(`<h2>${u?'Reset PIN – '+esc(u.name):'Add Person'}</h2>
+   ${u?'':'<label for="pn">Name (how they sign in)</label><input id="pn" autocomplete="off" placeholder="e.g. Mike Jones">'}
+   <label for="pp">${u?'New':''} PIN (4–8 numbers)</label><input id="pp" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="off" placeholder="e.g. 4821">
+   ${u?'<div class="mini">They’ll be signed out and need the new PIN.</div>':`<label for="pr">Role</label><select id="pr"><option value="member">Member (default)</option><option value="admin">Admin – full access</option></select>`}
+   <div class="mini" style="margin-top:8px">Tell them their name and PIN. They sign in once and the phone remembers them.</div>
+   <div class="err" id="er"></div><div class="row" style="margin-top:14px"><button class="btn" id="x">Cancel</button><button class="btn primary" id="s">Save</button></div>`);
+  $('#x').onclick=peopleSheet;
+  $('#s').onclick=async()=>{const pin=$('#pp').value.trim();if(!/^\d{4,8}$/.test(pin))return $('#er').textContent='PIN must be 4–8 numbers.';
+    try{if(u)await api('/people/'+u.id,{method:'PUT',body:{pin}});else{const name=$('#pn').value.trim();if(!name)return $('#er').textContent='Enter a name.';await api('/people',{method:'POST',body:{name,pin,role:$('#pr').value}});}
+      toast(u?'PIN reset':'Person added');peopleSheet();}catch(x){$('#er').textContent=x.message;}};
 }
 async function credits(){const c=window.FF_CREDITS||await fetch('/photos/credits.json').then(r=>r.json()).catch(()=>({}));
   modal(`<h2>Photo Credits</h2><p class="mini">Photos from Wikimedia Commons, used under their licenses (unmodified except resizing/cropping).</p>${Object.entries(c).map(([k,v])=>`<div class="item"><b style="text-transform:capitalize">${esc(k.replace('-',' '))}</b><div class="mini">${esc(v.author)} · ${esc(v.license)}</div><a href="${esc(v.page)}" target="_blank" rel="noopener" style="color:var(--yellow);word-break:break-all;font-size:14px">${esc(v.page)}</a></div>`).join('')}<button class="btn block" id="x">Close</button>`);$('#x').onclick=close;}
