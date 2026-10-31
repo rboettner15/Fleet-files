@@ -58,6 +58,22 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
     save(); fs.writeFileSync(DB_FILE + '.parts-seeded', now());
   }
 
+  // ---- Procedures (v4): checklists, inspections, documents. Additive only. ----
+  db.exec(`
+  CREATE TABLE IF NOT EXISTS checklists(id INTEGER PRIMARY KEY AUTOINCREMENT, equipment_id INTEGER NOT NULL REFERENCES equipment(id) ON DELETE CASCADE, name TEXT NOT NULL, items TEXT NOT NULL DEFAULT '[]', is_example INTEGER DEFAULT 0, created_at TEXT, updated_at TEXT);
+  CREATE TABLE IF NOT EXISTS inspections(id INTEGER PRIMARY KEY AUTOINCREMENT, checklist_id INTEGER NOT NULL REFERENCES checklists(id) ON DELETE CASCADE, equipment_id INTEGER NOT NULL REFERENCES equipment(id) ON DELETE CASCADE, checklist_name TEXT, performed_by TEXT, date TEXT, meter REAL, results TEXT NOT NULL DEFAULT '[]', pass_count INTEGER, fail_count INTEGER, notes TEXT, created_at TEXT);
+  CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY AUTOINCREMENT, equipment_id INTEGER NOT NULL REFERENCES equipment(id) ON DELETE CASCADE, title TEXT NOT NULL, filename TEXT, stored_name TEXT NOT NULL, mime TEXT, size INTEGER, uploaded_by TEXT, created_at TEXT, updated_at TEXT);
+  `);
+  const DOCS_DIR = path.join(path.dirname(DB_FILE), 'docs');
+  fs.mkdirSync(DOCS_DIR, { recursive: true });
+  const MAX_DOC = 25 * 1024 * 1024;
+  if (!fs.existsSync(DB_FILE + '.procedures-seeded')) {
+    const items = ['Walk-around: no leaks, damage, or loose parts', 'Engine oil level OK', 'Coolant level OK', 'Hydraulic / fuel levels OK', 'Tires / tracks and wheels OK', 'Lights, horn, and backup alarm work', 'Brakes and steering work', 'Seat belt, mirrors, and fire extinguisher OK'];
+    for (const e of all('SELECT id FROM equipment WHERE is_example=1'))
+      db.run('INSERT INTO checklists(equipment_id,name,items,is_example,created_at,updated_at) VALUES(?,?,?,1,?,?)', [e.id, 'EXAMPLE – Daily Pre-Op Inspection', JSON.stringify(items), now(), now()]);
+    save(); fs.writeFileSync(DB_FILE + '.procedures-seeded', now());
+  }
+
   const app = express();
   app.use(express.json({ limit: '8mb' }));
   app.use(express.static(path.join(__dirname, 'public'), { setHeaders: (res, p) => { if (p.endsWith('sw.js')) res.set('Cache-Control', 'no-cache'); } }));
@@ -94,7 +110,12 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
     run(`UPDATE equipment SET ${F.map(f => f + '=?')},updated_at=? WHERE id=?`, [...vals(req.body), now(), +req.params.id]);
     res.json({ ok: true });
   });
-  api.delete('/equipment/:id', admin, (req, res) => { run('DELETE FROM equipment WHERE id=?', [+req.params.id]); res.json({ ok: true }); });
+  api.delete('/equipment/:id', admin, (req, res) => {
+    const docs = all('SELECT stored_name FROM documents WHERE equipment_id=?', [+req.params.id]);
+    run('DELETE FROM equipment WHERE id=?', [+req.params.id]);
+    for (const d of docs) fs.rm(path.join(path.dirname(DB_FILE), 'docs', path.basename(d.stored_name)), { force: true }, () => {});
+    res.json({ ok: true });
+  });
 
   api.get('/equipment/:id/notes', (req, res) => res.json(all('SELECT * FROM notes WHERE equipment_id=? ORDER BY created_at DESC, id DESC', [+req.params.id])));
   api.post('/equipment/:id/notes', (req, res) => {
@@ -139,6 +160,72 @@ const DB_FILE = process.env.DB_FILE || path.join(process.env.DATA_DIR || path.jo
   // Photo only update (equipment)
   api.put('/equipment/:id/photo', (req, res) => { run('UPDATE equipment SET photo=?,updated_at=? WHERE id=?', [req.body.photo || null, now(), +req.params.id]); res.json({ ok: true }); });
 
+  // ---- Procedures: checklists ----
+  const cleanItems = a => (Array.isArray(a) ? a : []).map(x => String(x || '').trim()).filter(Boolean).slice(0, 200);
+  const ckOut = c => c && { ...c, items: JSON.parse(c.items || '[]') };
+  api.get('/equipment/:id/checklists', (req, res) => res.json(all(`SELECT c.*, (SELECT COUNT(*) FROM inspections i WHERE i.checklist_id=c.id) inspection_count,
+    (SELECT MAX(created_at) FROM inspections i WHERE i.checklist_id=c.id) last_done FROM checklists c WHERE equipment_id=? ORDER BY c.is_example, c.name COLLATE NOCASE`, [+req.params.id]).map(ckOut)));
+  api.get('/checklists/:id', (req, res) => { const c = ckOut(get('SELECT * FROM checklists WHERE id=?', [+req.params.id])); c ? res.json(c) : res.status(404).json({ error: 'Not found' }); });
+  api.post('/equipment/:id/checklists', (req, res) => {
+    const name = String(req.body.name || '').trim(); if (!name) return res.status(400).json({ error: 'Checklist name is required' });
+    if (!get('SELECT id FROM equipment WHERE id=?', [+req.params.id])) return res.status(404).json({ error: 'Not found' });
+    res.status(201).json({ id: run('INSERT INTO checklists(equipment_id,name,items,created_at,updated_at) VALUES(?,?,?,?,?)', [+req.params.id, name, JSON.stringify(cleanItems(req.body.items)), now(), now()]) });
+  });
+  api.put('/checklists/:id', (req, res) => {
+    const name = String(req.body.name || '').trim(); if (!name) return res.status(400).json({ error: 'Checklist name is required' });
+    run('UPDATE checklists SET name=?,items=?,updated_at=? WHERE id=?', [name, JSON.stringify(cleanItems(req.body.items)), now(), +req.params.id]); res.json({ ok: true });
+  });
+  api.delete('/checklists/:id', admin, (req, res) => { run('DELETE FROM checklists WHERE id=?', [+req.params.id]); res.json({ ok: true }); });
+  // inspections (completed runs of a checklist)
+  const inOut = r => r && { ...r, results: JSON.parse(r.results || '[]') };
+  api.get('/checklists/:id/inspections', (req, res) => res.json(all('SELECT * FROM inspections WHERE checklist_id=? ORDER BY created_at DESC, id DESC', [+req.params.id]).map(inOut)));
+  api.post('/checklists/:id/inspections', (req, res) => {
+    const c = get('SELECT * FROM checklists WHERE id=?', [+req.params.id]); if (!c) return res.status(404).json({ error: 'Not found' });
+    const b = req.body, results = (Array.isArray(b.results) ? b.results : []).map(r => ({ item: String(r.item || ''), result: r.result === 'fail' ? 'fail' : r.result === 'pass' ? 'pass' : 'skip', note: String(r.note || '').trim() }));
+    if (!b.performed_by) return res.status(400).json({ error: 'Your name is required' });
+    if (!results.length) return res.status(400).json({ error: 'No items checked' });
+    res.status(201).json({ id: run('INSERT INTO inspections(checklist_id,equipment_id,checklist_name,performed_by,date,meter,results,pass_count,fail_count,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+      [c.id, c.equipment_id, c.name, String(b.performed_by), b.date || now().slice(0, 10), b.meter === '' || b.meter == null ? null : +b.meter, JSON.stringify(results),
+        results.filter(r => r.result === 'pass').length, results.filter(r => r.result === 'fail').length, b.notes || null, now()]) });
+  });
+  api.delete('/inspections/:id', admin, (req, res) => { run('DELETE FROM inspections WHERE id=?', [+req.params.id]); res.json({ ok: true }); });
+
+  // ---- Procedures: manuals & documents (files on disk in DATA_DIR/docs, random names) ----
+  const SAFE_INLINE = /^(application\/pdf|image\/(png|jpeg|gif|webp|heic|heif)|text\/plain)$/;
+  const docPath = n => path.join(DOCS_DIR, path.basename(n));
+  api.get('/equipment/:id/docs', (req, res) => res.json(all('SELECT id,equipment_id,title,filename,mime,size,uploaded_by,created_at,updated_at FROM documents WHERE equipment_id=? ORDER BY title COLLATE NOCASE', [+req.params.id])));
+  api.post('/equipment/:id/docs', express.raw({ type: () => true, limit: MAX_DOC }), (req, res) => {
+    const title = String(req.query.title || '').trim(), filename = path.basename(String(req.query.filename || 'file')).slice(0, 200);
+    if (!title) return res.status(400).json({ error: 'Title is required' });
+    if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'No file received' });
+    if (!get('SELECT id FROM equipment WHERE id=?', [+req.params.id])) return res.status(404).json({ error: 'Not found' });
+    const mime = String(req.query.type || 'application/octet-stream').split(';')[0].trim().toLowerCase();
+    const ext = (path.extname(filename).toLowerCase().match(/^\.[a-z0-9]{1,8}$/) || [''])[0];
+    const stored = require('crypto').randomBytes(24).toString('hex') + ext;
+    fs.writeFileSync(docPath(stored), req.body);
+    res.status(201).json({ id: run('INSERT INTO documents(equipment_id,title,filename,stored_name,mime,size,uploaded_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',
+      [+req.params.id, title, filename, stored, mime, req.body.length, String(req.query.by || '') || null, now(), now()]) });
+  });
+  api.get('/docs/:id/file', (req, res) => {
+    const d = get('SELECT * FROM documents WHERE id=?', [+req.params.id]);
+    if (!d || !fs.existsSync(docPath(d.stored_name))) return res.status(404).json({ error: 'Not found' });
+    const inline = SAFE_INLINE.test(d.mime || '');
+    res.set('Content-Type', inline ? d.mime : 'application/octet-stream').set('X-Content-Type-Options', 'nosniff').set('Cache-Control', 'private, no-store')
+      .set('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(d.filename || 'file')}`).set('Content-Length', String(fs.statSync(docPath(d.stored_name)).size));
+    fs.createReadStream(docPath(d.stored_name)).pipe(res);
+  });
+  api.put('/docs/:id', (req, res) => {
+    const title = String(req.body.title || '').trim(); if (!title) return res.status(400).json({ error: 'Title is required' });
+    run('UPDATE documents SET title=?,updated_at=? WHERE id=?', [title, now(), +req.params.id]); res.json({ ok: true });
+  });
+  api.delete('/docs/:id', admin, (req, res) => {
+    const d = get('SELECT stored_name FROM documents WHERE id=?', [+req.params.id]);
+    run('DELETE FROM documents WHERE id=?', [+req.params.id]);
+    if (d) fs.rm(docPath(d.stored_name), { force: true }, () => {});
+    res.json({ ok: true });
+  });
+
   app.use('/api', api);
+  app.use((err, req, res, next) => err && err.type === 'entity.too.large' ? res.status(413).json({ error: 'File is too big (max 25 MB)' }) : next(err));
   app.listen(PORT, () => console.log(`Fleet Files on :${PORT}`));
 })();

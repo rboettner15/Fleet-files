@@ -31,6 +31,15 @@ Five equipment items named `EXAMPLE – …` are seeded once on first start. Del
 `PUT /api/equipment/:id/photo` (`{photo: dataURL|null}`), `GET/POST /api/equipment/:id/parts`, `GET/PUT/DELETE /api/parts/:id`, `GET /api/parts/:id/photo`.
 Parts fields: name, part_number, manufacturer, qty, reorder_level (LOW when qty ≤ reorder_level), bin, supplier, price, url, notes, photo. EXAMPLE parts are seeded once.
 
+## Procedures tab (v4)
+Each equipment piece has a **Procedures** tab next to Notes / Service / Parts:
+- **Inspection checklists** – make a named list (one item per line), tap **Start Inspection**, mark each item Pass/Fail with an optional note, save. Past inspections (who, date, pass/fail) are listed under the checklist. Deleting a checklist or inspection needs the admin code.
+- **Manuals & documents** – upload a PDF, photo, or Office file (max **25 MB**) with a title; tap to open (PDFs open in Safari's viewer), rename, or delete (admin code).
+- Files are stored on disk in `DATA_DIR/docs/` (e.g. `/var/data/docs` on Render) with random names, **not** in the database. Back up that folder along with `fleet.db`.
+- API: `GET/POST /api/equipment/:id/checklists`, `GET/PUT/DELETE /api/checklists/:id`, `GET/POST /api/checklists/:id/inspections`, `DELETE /api/inspections/:id`,
+  `GET /api/equipment/:id/docs`, `POST /api/equipment/:id/docs?title=&filename=&type=` (raw file body), `GET /api/docs/:id/file`, `PUT/DELETE /api/docs/:id`.
+- New tables (`checklists`, `inspections`, `documents`) are created with `CREATE TABLE IF NOT EXISTS`; existing data is untouched. No new env vars or dependencies.
+
 ## Permanent hosting (recommended)
 The app needs an always-on server with a persistent disk (for the SQLite file). A `Dockerfile` is included (stores DB at `/data/fleet.db`).
 - **Fly.io (cheapest):** smallest always-on machine shared-cpu-1x/256MB ≈ **$2.19/mo** + 1 GB volume **$0.15/mo** + egress $0.02/GB (fly.io/pricing, checked Oct 2026). No free tier; credit card required after trial. `fly launch`, `fly volumes create data --size 1`, mount at `/data`, `fly secrets set FLEET_ACCESS_CODE=… FLEET_ADMIN_CODE=…`.

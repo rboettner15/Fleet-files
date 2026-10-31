@@ -20,6 +20,7 @@ function toast(m){const t=$('#toast');t.textContent=m;t.hidden=false;clearTimeou
 
 // ---------- DEMO MODE (all data local to this device) ----------
 const DEMO_KEY='ff_demo_db';
+const DEMO_CHECK=['Walk-around: no leaks, damage, or loose parts','Engine oil level OK','Coolant level OK','Hydraulic / fuel levels OK','Tires / tracks and wheels OK','Lights, horn, and backup alarm work','Brakes and steering work','Seat belt, mirrors, and fire extinguisher OK'];
 const isDemo=()=>LS.ff_demo==='1'||!!window.FF_STANDALONE;
 async function demoSeed(){return window.FF_SEED?JSON.parse(JSON.stringify(window.FF_SEED)):fetch('/demo-seed.json').then(r=>r.json());}
 async function demoDb(){let d=LS[DEMO_KEY];if(d)return JSON.parse(d);const s=await demoSeed();s.next=1000;LS[DEMO_KEY]=JSON.stringify(s);return s;}
@@ -32,13 +33,27 @@ async function demoApi(path,opt){
   const lastSvc=id=>d.service.filter(s=>s.equipment_id===id).map(s=>s.date).sort().pop()||null;
   const low=p=>p.qty!=null&&p.reorder_level!=null&&Number(p.qty)<=Number(p.reorder_level);
   let x;
+  if(!d.checklists){d.checklists=[];d.inspections=[];d.equipment.filter(e=>e.is_example).forEach(e=>d.checklists.push({id:nid(),equipment_id:e.id,name:'EXAMPLE – Daily Pre-Op Inspection',items:DEMO_CHECK.slice(),is_example:1,created_at:now,updated_at:now}));demoSave(d);}
   if(path==='/check')return{ok:true};
+  if(x=path.match(/^\/equipment\/(\d+)\/checklists$/)){const id=+x[1];
+    if(m==='GET')return d.checklists.filter(c=>c.equipment_id===id).map(c=>{const ins=d.inspections.filter(i=>i.checklist_id===c.id);return{...c,inspection_count:ins.length,last_done:ins.map(i=>i.created_at).sort().pop()||null};}).sort((p,q)=>p.is_example-q.is_example||p.name.localeCompare(q.name));
+    if(!b.name)throw new Error('Checklist name is required');const c={id:nid(),equipment_id:id,name:b.name,items:b.items||[],is_example:0,created_at:now,updated_at:now};d.checklists.push(c);demoSave(d);return{id:c.id};}
+  if(x=path.match(/^\/checklists\/(\d+)$/)){const id=+x[1],i=d.checklists.findIndex(c=>c.id===id);if(i<0)throw new Error('Not found');
+    if(m==='GET')return d.checklists[i];
+    if(m==='PUT'){if(!b.name)throw new Error('Checklist name is required');Object.assign(d.checklists[i],{name:b.name,items:b.items||[],updated_at:now});demoSave(d);return{ok:true};}
+    if(m==='DELETE'){d.checklists.splice(i,1);d.inspections=d.inspections.filter(r=>r.checklist_id!==id);demoSave(d);return{ok:true};}}
+  if(x=path.match(/^\/checklists\/(\d+)\/inspections$/)){const id=+x[1],c=d.checklists.find(c=>c.id===id);if(!c)throw new Error('Not found');
+    if(m==='GET')return d.inspections.filter(r=>r.checklist_id===id).sort((p,q)=>q.created_at.localeCompare(p.created_at));
+    const r={id:nid(),checklist_id:id,equipment_id:c.equipment_id,checklist_name:c.name,performed_by:b.performed_by,date:b.date,meter:b.meter===''||b.meter==null?null:+b.meter,results:b.results,pass_count:b.results.filter(r=>r.result==='pass').length,fail_count:b.results.filter(r=>r.result==='fail').length,notes:b.notes||null,created_at:now};
+    d.inspections.push(r);demoSave(d);return{id:r.id};}
+  if(x=path.match(/^\/inspections\/(\d+)$/)){d.inspections=d.inspections.filter(r=>r.id!==+x[1]);demoSave(d);return{ok:true};}
+  if(path.match(/^\/equipment\/(\d+)\/docs$/))return[];
   if(path==='/equipment'&&m==='GET')return d.equipment.map(e=>({...e,photo:undefined,photo_src:e.photo,has_photo:!!e.photo,last_service:lastSvc(e.id),note_count:d.notes.filter(n=>n.equipment_id===e.id).length,low_parts:d.parts.filter(p=>p.equipment_id===e.id&&low(p)).length})).sort((p,q)=>p.is_example-q.is_example||p.name.localeCompare(q.name));
   if(path==='/equipment'&&m==='POST'){if(!b.name)throw new Error('Name is required');const e=num({...clean(b),id:nid(),is_example:0,created_at:now,updated_at:now},['meter','year']);d.equipment.push(e);demoSave(d);return{id:e.id};}
   if(x=path.match(/^\/equipment\/(\d+)$/)){const id=+x[1],i=d.equipment.findIndex(e=>e.id===id);if(i<0)throw new Error('Not found');
     if(m==='GET')return{...d.equipment[i],last_service:lastSvc(id)};
     if(m==='PUT'){if(!b.name)throw new Error('Name is required');d.equipment[i]=num({...d.equipment[i],...clean(b),id,updated_at:now},['meter','year']);demoSave(d);return{ok:true};}
-    if(m==='DELETE'){d.equipment.splice(i,1);['notes','service','parts'].forEach(k=>d[k]=d[k].filter(r=>r.equipment_id!==id));demoSave(d);return{ok:true};}}
+    if(m==='DELETE'){d.equipment.splice(i,1);['notes','service','parts','checklists','inspections'].forEach(k=>d[k]=(d[k]||[]).filter(r=>r.equipment_id!==id));demoSave(d);return{ok:true};}}
   if(x=path.match(/^\/equipment\/(\d+)\/photo$/)){const e=d.equipment.find(e=>e.id===+x[1]);e.photo=b.photo||null;e.updated_at=now;demoSave(d);return{ok:true};}
   if(x=path.match(/^\/equipment\/(\d+)\/(notes|service|parts)$/)){const id=+x[1],k=x[2];
     if(m==='GET'){if(k==='notes')return d.notes.filter(n=>n.equipment_id===id).sort((p,q)=>q.created_at.localeCompare(p.created_at));
@@ -145,7 +160,7 @@ async function detail(id){
    <div class="row" style="margin-bottom:10px">${STATUSES.map(s=>`<button class="btn ${e.status===s?'primary':''}" data-s="${s}" style="padding:0 6px;font-size:14px">${s}</button>`).join('')}</div>
    <div class="grid">${kv('Type',e.type)}${kv('Unit / ID',e.unit)}${kv('Make',e.make)}${kv('Model',e.model)}${kv('Year',e.year)}${kv(e.meter_unit==='miles'?'Mileage':'Hours',e.meter!=null?Number(e.meter).toLocaleString()+' '+(e.meter_unit||''):null)}${kv('VIN / Serial',e.vin)}${kv('Location',e.location)}</div>
    <button class="btn block" id="edit" style="margin-top:10px">✎ Edit Details</button>
-   <div class="tabs">${['notes','service','parts'].map(t=>`<button class="tab ${state.tab===t?'on':''}" data-t="${t}">${t==='parts'?'Parts':t==='service'?'Service':'Notes'}</button>`).join('')}</div>
+   <div class="tabs">${['notes','service','parts','procedures'].map(t=>`<button class="tab ${state.tab===t?'on':''}" data-t="${t}">${t==='parts'?'Parts':t==='service'?'Service':t==='procedures'?'Procedures':'Notes'}</button>`).join('')}</div>
    <div id="tabbody"></div>`;
   app.querySelectorAll('[data-s]').forEach(b=>b.onclick=async()=>{try{await api('/equipment/'+id,{method:'PUT',body:{...e,status:b.dataset.s}});toast('Status: '+b.dataset.s);detail(id);}catch(x){toast(x.message);}});
   $('#edit').onclick=()=>editForm(e);
@@ -156,6 +171,7 @@ async function detail(id){
 async function tab(e){
   const tb=$('#tabbody');
   if(state.tab==='parts')return partsTab(e);
+  if(state.tab==='procedures')return procTab(e);
   if(state.tab==='notes'){
     tb.innerHTML=`<textarea id="nb" placeholder="Write a note about this unit…"></textarea><div class="mini" style="margin:4px 0 8px">Posting as <b>${esc(store.name)}</b></div>
      <button class="btn primary block" id="post">Post Note</button><div id="nl"><div class="empty">Loading…</div></div>`;
@@ -316,6 +332,126 @@ function partForm(e,p){
      <div class="row" style="margin-top:12px"><button class="btn" id="x">Cancel</button><button class="btn danger" id="y">Delete Part</button></div>`);
     $('#x').onclick=close;
     $('#y').onclick=async()=>{try{await api('/parts/'+p.id,{method:'DELETE'});close();toast('Part deleted');tab(e);}catch(x){toast(x.message);}};};
+}
+// ---------- Procedures: inspection checklists + manuals ----------
+const fmtSize=n=>n>=1048576?(n/1048576).toFixed(1)+' MB':Math.max(1,Math.round(n/1024))+' KB';
+const docIcon=d=>/pdf/.test(d.mime||'')?'📕':/^image\//.test(d.mime||'')?'🖼':'📄';
+const docUrl=d=>`/api/docs/${d.id}/file?code=${encodeURIComponent(store.code||'')}`;
+function adminConfirm(title,text,btn,fn){
+  modal(`<h2>${title}</h2><p>${text}</p>
+   <label>Admin code${isDemo()?' (demo: type anything)':''}</label><input id="ac" type="password" autocomplete="off" value="${esc(SS.ff_admin||'')}">
+   <div class="err" id="er"></div><div class="row" style="margin-top:12px"><button class="btn" id="x">Cancel</button><button class="btn danger" id="y">${btn}</button></div>`);
+  $('#x').onclick=close;
+  $('#y').onclick=async()=>{const a=$('#ac').value.trim();if(!a)return $('#er').textContent='Enter the admin code.';
+    try{await fn(a);SS.ff_admin=a;}catch(x){$('#er').textContent=x.message==='Admin code required'?'Wrong admin code.':x.message;}};
+}
+async function procTab(e){
+  const tb=$('#tabbody');
+  tb.innerHTML=`<div class="sec-h">✅ Inspection Checklists</div>
+   <div id="cl"><div class="empty">Loading…</div></div>
+   <button class="btn primary block" id="addc">＋ New Checklist</button>
+   <div class="sec-h" style="margin-top:26px">📘 Manuals &amp; Documents</div>
+   <div id="dl"><div class="empty">Loading…</div></div>
+   ${isDemo()?'<div class="item mini">Uploading manuals is turned off in the demo. In the real app, tap “Upload Manual” to add a PDF or photo (up to 25 MB).</div>':
+   '<label class="btn primary block" id="upl" style="color:#111">⬆ Upload Manual / Document<input id="docf" type="file" accept=".pdf,image/*,.doc,.docx,.xls,.xlsx,.txt,.csv,.ppt,.pptx" hidden></label>'}`;
+  $('#addc').onclick=()=>checklistForm(e);
+  if($('#docf'))$('#docf').onchange=ev=>{const f=ev.target.files[0];ev.target.value='';if(f)uploadForm(e,f);};
+  const [cs,ds]=await Promise.all([api(`/equipment/${e.id}/checklists`).catch(()=>[]),api(`/equipment/${e.id}/docs`).catch(()=>[])]);
+  $('#cl').innerHTML=cs.length?cs.map(c=>`<button class="pcard ck" data-id="${c.id}"><div class="thumb">📋</div><div class="main"><div class="name">${esc(c.name)}</div>
+    <div class="sub">${c.items.length} item${c.items.length===1?'':'s'} · ${c.last_done?'Last done '+fmtDate(c.last_done):'Not done yet'}</div></div><div class="chev">›</div></button>`).join('')
+    :'<div class="empty">No checklists yet. Tap “New Checklist”.</div>';
+  $('#cl').querySelectorAll('.ck').forEach(b=>b.onclick=()=>checklistView(e,cs.find(c=>c.id===+b.dataset.id)));
+  $('#dl').innerHTML=ds.length?ds.map(d=>`<button class="pcard dc" data-id="${d.id}"><div class="thumb">${docIcon(d)}</div><div class="main"><div class="name">${esc(d.title)}</div>
+    <div class="sub">${esc(d.filename||'')} · ${fmtSize(d.size||0)}</div><div class="sub">Added ${fmtDate(d.created_at)}${d.uploaded_by?' by '+esc(d.uploaded_by):''}</div></div><div class="chev">›</div></button>`).join('')
+    :(isDemo()?'':'<div class="empty">No manuals yet.</div>');
+  $('#dl').querySelectorAll('.dc').forEach(b=>b.onclick=()=>docSheet(e,ds.find(d=>d.id===+b.dataset.id)));
+}
+function backToProc(e){close();state.tab='procedures';tab(e);}
+async function checklistView(e,c){
+  modal(`<h2>${esc(c.name)}</h2><div class="mini">${esc(e.name)} · ${c.items.length} items</div>
+   <button class="btn primary block" id="run" style="margin-top:12px">▶ Start Inspection</button>
+   <div class="row" style="margin-top:10px"><button class="btn" id="x">Close</button><button class="btn" id="ed">✎ Edit List</button></div>
+   <div class="sec-h" style="margin-top:20px">Past Inspections</div><div id="hl"><div class="empty">Loading…</div></div>`);
+  $('#x').onclick=close;$('#ed').onclick=()=>checklistForm(e,c);$('#run').onclick=()=>runInspection(e,c);
+  const hs=await api(`/checklists/${c.id}/inspections`).catch(()=>[]);
+  if(!$('#hl'))return;
+  $('#hl').innerHTML=hs.length?hs.map(h=>`<button class="pcard hi ${h.fail_count?'low':'ok'}" data-id="${h.id}"><div class="main"><div class="name">${fmtDate(h.date)}</div>
+    <div class="sub">By ${esc(h.performed_by||'—')} · ${fmtTime(h.created_at)}</div></div>
+    <div class="qty">${h.fail_count?`<em>${h.fail_count} FAIL</em>`:'<b class="pass">✓</b><span>all pass</span>'}</div></button>`).join(''):'<div class="empty">No inspections yet.</div>';
+  $('#hl').querySelectorAll('.hi').forEach(b=>b.onclick=()=>inspectionView(e,c,hs.find(h=>h.id===+b.dataset.id)));
+}
+function inspectionView(e,c,h){
+  modal(`<h2>${esc(h.checklist_name||c.name)}</h2><div class="mini">${fmtDate(h.date)} · by <b>${esc(h.performed_by||'—')}</b>${h.meter!=null?' · '+Number(h.meter).toLocaleString()+' '+esc(e.meter_unit||''):''}</div>
+   <div class="insp-sum ${h.fail_count?'bad':'good'}">${h.pass_count} pass · ${h.fail_count} fail</div>
+   ${h.results.map(r=>`<div class="ires ${r.result}"><span class="pf">${r.result==='pass'?'✓ PASS':r.result==='fail'?'✗ FAIL':'– SKIP'}</span><div><div>${esc(r.item)}</div>${r.note?`<div class="mini">📝 ${esc(r.note)}</div>`:''}</div></div>`).join('')}
+   ${h.notes?`<div class="item"><div class="body">${esc(h.notes)}</div></div>`:''}
+   <button class="btn block" id="bk" style="margin-top:12px">‹ Back</button>
+   <button class="linkbtn" id="del" style="margin-top:10px;width:100%">Delete this inspection record</button>`);
+  $('#bk').onclick=()=>checklistView(e,c);
+  $('#del').onclick=()=>adminConfirm('Delete inspection record?','This removes the inspection from '+fmtDate(h.date)+'. This cannot be undone.','Delete',async a=>{await api('/inspections/'+h.id,{method:'DELETE',admin:a});toast('Deleted');checklistView(e,c);});
+}
+function checklistForm(e,c){
+  const isNew=!c;c=c||{name:'',items:[]};
+  modal(`<h2>${isNew?'New Checklist':'Edit Checklist'}</h2><div class="mini">${esc(e.name)}</div>
+   <label for="cn">Checklist name *</label><input id="cn" value="${esc(c.name)}" placeholder="e.g. Daily Pre-Op Inspection">
+   <label for="ci">Items to check – one per line</label><textarea id="ci" rows="9" placeholder="Engine oil level OK&#10;Tires OK&#10;Lights work">${esc(c.items.join('\n'))}</textarea>
+   <div class="mini">Each line becomes one Pass / Fail item.</div>
+   <div class="row" style="margin-top:16px"><button class="btn" id="x">Cancel</button><button class="btn primary" id="s">Save</button></div>
+   ${isNew?'':'<button class="btn danger block" id="del" style="margin-top:22px">🗑 Delete Checklist</button>'}`);
+  $('#x').onclick=isNew?close:()=>checklistView(e,c);
+  $('#s').onclick=async()=>{const name=$('#cn').value.trim(),items=$('#ci').value.split('\n').map(s=>s.trim()).filter(Boolean);
+    if(!name)return toast('Give the checklist a name');if(!items.length)return toast('Add at least one item');
+    try{if(isNew)await api(`/equipment/${e.id}/checklists`,{method:'POST',body:{name,items}});else await api('/checklists/'+c.id,{method:'PUT',body:{name,items}});toast('Checklist saved');backToProc(e);}catch(x){toast(x.message);}};
+  if(!isNew)$('#del').onclick=()=>adminConfirm(`Delete “${esc(c.name)}”?`,'This removes the checklist and all of its past inspection records. This cannot be undone.','Delete',async a=>{await api('/checklists/'+c.id,{method:'DELETE',admin:a});toast('Checklist deleted');backToProc(e);});
+}
+function runInspection(e,c){
+  const res=c.items.map(item=>({item,result:null,note:''}));
+  modal(`<h2>${esc(c.name)}</h2><div class="mini">${esc(e.name)} · Inspector <b>${esc(store.name)}</b></div>
+   <div class="row" style="margin-top:6px"><div><label for="idt">Date</label><input id="idt" type="date" value="${new Date().toLocaleDateString('en-CA')}"></div>
+    <div><label for="imt">${e.meter_unit==='miles'?'Mileage':'Hours'}</label><input id="imt" type="number" inputmode="decimal" value="${e.meter??''}"></div></div>
+   <div class="iprog" id="ipg"></div>
+   ${res.map((r,i)=>`<div class="icheck" id="ic${i}"><div class="itxt">${i+1}. ${esc(r.item)}</div>
+     <div class="row"><button class="btn pfb" data-i="${i}" data-r="pass">✓ Pass</button><button class="btn pfb" data-i="${i}" data-r="fail">✗ Fail</button></div>
+     <input class="inote" data-i="${i}" placeholder="Note (optional)"></div>`).join('')}
+   <label for="ino">Overall notes (optional)</label><textarea id="ino"></textarea>
+   <div class="row" style="margin-top:16px"><button class="btn" id="x">Cancel</button><button class="btn primary" id="s">Save Inspection</button></div>`);
+  const prog=()=>{const n=res.filter(r=>r.result).length,f=res.filter(r=>r.result==='fail').length;$('#ipg').innerHTML=`<b>${n} of ${res.length}</b> checked${f?` · <span style="color:var(--red)">${f} fail</span>`:''}`;};prog();
+  $('#modal').querySelectorAll('.pfb').forEach(b=>b.onclick=()=>{const i=+b.dataset.i;res[i].result=b.dataset.r;
+    const box=$('#ic'+i);box.className='icheck '+b.dataset.r;box.querySelectorAll('.pfb').forEach(x=>x.classList.toggle('on',x===b));prog();});
+  $('#modal').querySelectorAll('.inote').forEach(n=>n.oninput=()=>res[+n.dataset.i].note=n.value);
+  $('#x').onclick=()=>checklistView(e,c);
+  $('#s').onclick=async()=>{const miss=res.findIndex(r=>!r.result);
+    if(miss>=0){toast('Mark every item Pass or Fail');$('#ic'+miss).scrollIntoView({behavior:'smooth',block:'center'});return;}
+    try{await api(`/checklists/${c.id}/inspections`,{method:'POST',body:{performed_by:store.name,date:$('#idt').value,meter:$('#imt').value,notes:$('#ino').value.trim(),results:res}});
+      toast('Inspection saved');checklistView(e,c);tab(e);}catch(x){toast(x.message);}};
+}
+function uploadForm(e,f){
+  const MAX=25*1024*1024;
+  if(f.size>MAX)return toast('That file is too big (max 25 MB)');
+  modal(`<h2>Upload Document</h2><div class="mini">${esc(f.name)} · ${fmtSize(f.size)}</div>
+   <label for="dt">Title *</label><input id="dt" value="${esc(f.name.replace(/\.[^.]+$/,''))}" placeholder="e.g. Operator's Manual">
+   <div class="err" id="er"></div>
+   <div class="row" style="margin-top:16px"><button class="btn" id="x">Cancel</button><button class="btn primary" id="s">Upload</button></div>`);
+  $('#x').onclick=close;
+  $('#s').onclick=async()=>{const title=$('#dt').value.trim();if(!title)return $('#er').textContent='Enter a title.';
+    const s=$('#s');s.disabled=true;s.textContent='Uploading…';
+    try{const q=new URLSearchParams({title,filename:f.name,type:f.type||'application/octet-stream',by:store.name});
+      const r=await fetch(`/api/equipment/${e.id}/docs?`+q,{method:'POST',headers:{'x-access-code':store.code||'','Content-Type':'application/octet-stream'},body:f});
+      const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(r.status===413?'File is too big (max 25 MB)':j.error||'Upload failed – check your connection');
+      toast('Uploaded');backToProc(e);}catch(x){s.disabled=false;s.textContent='Upload';$('#er').textContent=x.message;}};
+}
+function docSheet(e,d){
+  modal(`<div style="font-size:44px;text-align:center">${docIcon(d)}</div><h2 style="text-align:center">${esc(d.title)}</h2>
+   <div class="mini" style="text-align:center">${esc(d.filename||'')} · ${fmtSize(d.size||0)} · ${fmtDate(d.created_at)}</div>
+   <a class="btn primary block" id="op" style="margin-top:14px;text-decoration:none" href="${docUrl(d)}" target="_blank" rel="noopener">📖 Open</a>
+   <button class="btn block" id="rn" style="margin-top:10px">✎ Rename</button>
+   <button class="btn block" id="x" style="margin-top:10px">Close</button>
+   <button class="btn danger block" id="del" style="margin-top:22px">🗑 Delete</button>`);
+  $('#x').onclick=close;
+  $('#rn').onclick=()=>{modal(`<h2>Rename</h2><label for="dt">Title</label><input id="dt" value="${esc(d.title)}"><div class="row" style="margin-top:16px"><button class="btn" id="x">Cancel</button><button class="btn primary" id="s">Save</button></div>`);
+    $('#x').onclick=()=>docSheet(e,d);
+    $('#s').onclick=async()=>{const title=$('#dt').value.trim();if(!title)return toast('Enter a title');try{await api('/docs/'+d.id,{method:'PUT',body:{title}});toast('Renamed');backToProc(e);}catch(x){toast(x.message);}};};
+  $('#del').onclick=()=>adminConfirm(`Delete “${esc(d.title)}”?`,'This permanently removes the file. This cannot be undone.','Delete',async a=>{await api('/docs/'+d.id,{method:'DELETE',admin:a});toast('Deleted');backToProc(e);});
 }
 async function credits(){const c=window.FF_CREDITS||await fetch('/photos/credits.json').then(r=>r.json()).catch(()=>({}));
   modal(`<h2>Photo Credits</h2><p class="mini">Photos from Wikimedia Commons, used under their licenses (unmodified except resizing/cropping).</p>${Object.entries(c).map(([k,v])=>`<div class="item"><b style="text-transform:capitalize">${esc(k.replace('-',' '))}</b><div class="mini">${esc(v.author)} · ${esc(v.license)}</div><a href="${esc(v.page)}" target="_blank" rel="noopener" style="color:var(--yellow);word-break:break-all;font-size:14px">${esc(v.page)}</a></div>`).join('')}<button class="btn block" id="x">Close</button>`);$('#x').onclick=close;}
