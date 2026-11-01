@@ -161,7 +161,8 @@ body.login-bg .login{padding-top:24vh}
 .pri-ic{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#fff;color:#dc2626;font:900 16px/1 "Oxanium",sans-serif;font-style:normal;vertical-align:middle;box-shadow:0 0 0 2px #7f1d1d}
 .seg-pri.on .pri-ic{background:#fff;color:#dc2626}
 .seg.seg4 button i.pri-ic{font-size:16px}
-.prict{position:absolute;top:2px;right:3px;min-width:18px;height:18px;padding:0 4px;border-radius:9px;background:#ffd400;color:#111;font:800 11px/18px "Oxanium",sans-serif;letter-spacing:0}
+.seg.seg4 button.seg-pri{position:relative;overflow:visible}
+.prict{position:absolute;top:4px;right:4px;z-index:1;min-width:21px;height:21px;padding:0 4px;box-sizing:border-box;border-radius:11px;background:#ffd400;color:#111;border:2px solid #7f1d1d;font:800 11.5px/17px "Oxanium",sans-serif;letter-spacing:0;text-align:center;pointer-events:none}
 .prict[hidden]{display:none}
 .pcard{border-left-color:#ef4444!important}
 .badge.b-pri{background:#dc2626;color:#fff}
@@ -193,3 +194,4 @@ body.selmode #app{padding-bottom:190px}
 #selbar .row{display:flex;gap:8px}#selbar .row .btn{flex:1;min-height:48px}
 #selbar .selcount{font-size:15px;color:var(--muted)}#selbar .selcount b{color:#ffd400;font-size:18px}
 #seldel[disabled]{opacity:.45}
+.seg.seg4 button.seg-pri:has(.prict:not([hidden])) .pri-ic{transform:translateX(-9px)}

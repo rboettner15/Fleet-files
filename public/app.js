@@ -528,7 +528,7 @@ function docSheet(e,d){
 }
 // ---------- Shop Parts page (loose parts not tied to a machine) ----------
 let PRI_OPEN=0;
-const SEG=on=>`<nav class="seg seg3 seg4" aria-label="Main pages"><button class="${on==='eq'?'on':''}" onclick="location.hash=''"><i>🚜</i>Equipment</button><button class="${on==='parts'?'on':''}" onclick="location.hash='#/parts'"><i>🔩</i>Parts</button><button class="${on==='todo'?'on':''}" onclick="location.hash='#/todo'"><i>✅</i>To Do List</button><button class="seg-pri ${on==='pri'?'on':''}" onclick="location.hash='#/priority'" aria-label="Priority"><i class="pri-ic">!</i>Priority<b class="prict" ${PRI_OPEN?'':'hidden'}>${PRI_OPEN}</b></button></nav>`;
+const SEG=on=>`<nav class="seg seg3 seg4" aria-label="Main pages"><button class="${on==='eq'?'on':''}" onclick="location.hash=''"><i>🚜</i>Equipment</button><button class="${on==='parts'?'on':''}" onclick="location.hash='#/parts'"><i>🔩</i>Parts</button><button class="${on==='todo'?'on':''}" onclick="location.hash='#/todo'"><i>✅</i>To Do List</button><button class="seg-pri ${on==='pri'?'on':''}" onclick="location.hash='#/priority'" aria-label="Priority"><i class="pri-ic">!</i>Priority<b class="prict" ${PRI_OPEN?'':'hidden'}>${PRI_OPEN>99?"99+":PRI_OPEN}</b></button></nav>`;
 let loose=[],machParts=[];
 async function partsPage(){
   header('Fleet Files',false);
@@ -736,7 +736,7 @@ async function todoForm(t){
 const piRole=s=>((LISTS.roles||{}).pri_status||{})[s];
 const piDone=t=>piRole(t.status)==='done';
 let pitems=[];
-function setPriCount(n){PRI_OPEN=n;document.querySelectorAll('.prict').forEach(b=>{b.textContent=n;b.hidden=!n;});}
+function setPriCount(n){PRI_OPEN=n;document.querySelectorAll('.prict').forEach(b=>{b.textContent=n>99?'99+':n;b.setAttribute('aria-label',n+' open priority items');b.hidden=!n;});}
 async function refreshPriCount(){try{setPriCount((await api('/priority')).filter(t=>!piDone(t)).length);}catch(e){}}
 async function priorityPage(){
   header('Priority',false);

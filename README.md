@@ -99,6 +99,10 @@ The app needs an always-on server with a persistent disk (for the SQLite file). 
 - **Render (simplest dashboard):** Starter web service **$7/mo** + persistent disk **$0.25/GB/mo** (render.com/pricing, checked Oct 2026). Free tier cannot attach a disk, so data would be lost on restart — don't use free.
 Both give a permanent HTTPS URL, so the home-screen app keeps working.
 
+## Priority count badge (v15)
+
+When there are open priority items, the red Priority tab shows a yellow number in its top-right corner, inside the tab box (99+ for very large counts). It is hidden at 0 and updates right away when items are added, finished, or deleted (single ✕ or mass delete).
+
 ## Deleting things (v14)
 
 - **✕ on every card.** Machines, shop parts, machine parts, to-dos, priority items, and inside a machine: notes, service records, checklists, inspections and manuals. Tapping ✕ never opens the card. It always asks first: “Delete <name>? This can’t be undone.” → **Cancel** or red **Delete**.
